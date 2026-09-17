@@ -1,0 +1,17 @@
+{
+  "name": "ikhzasag-ums",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Их Засаг Их Сургууль — Сургалт, санхүүгийн нэгдсэн систем",
+  "scripts": {
+    "setup": "npm install && npm install --prefix apps/api && npm install --prefix apps/web",
+    "dev": "concurrently -k -n api,web -c blue,green \"npm run dev --prefix apps/api\" \"npm run dev --prefix apps/web\"",
+    "dev:api": "npm run dev --prefix apps/api",
+    "dev:web": "npm run dev --prefix apps/web",
+    "build": "npm run build --prefix apps/api && npm run build --prefix apps/web",
+    "typecheck": "npm run typecheck --prefix apps/api && npm run typecheck --prefix apps/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}
