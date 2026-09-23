@@ -35,8 +35,13 @@ export const mockAdapter: AxiosAdapter = async (config) => {
 
   if (!route) return fail(404, `Mock route олдсонгүй: ${method} ${url}`);
 
+  // Нээлттэй (нэвтрэхгүйгээр хандах) route-ууд
+  const PUBLIC = ['GET /certificates/verify/:code', 'POST /auth/lookup'];
+  const routeKey = `${route.method} ${Object.keys(routes).find((k) => routes[k] === route.handler)?.split(' ')[1] ?? ''}`;
+  const isPublic = PUBLIC.includes(routeKey);
+
   const session = getMockSession();
-  if (!session) return fail(401, 'Нэвтрэх шаардлагатай.');
+  if (!session && !isPublic) return fail(401, 'Нэвтрэх шаардлагатай.');
 
   const match = url.match(route.regex)!;
   const params = Object.fromEntries(route.keys.map((k, i) => [k, decodeURIComponent(match[i + 1])]));
@@ -55,7 +60,7 @@ export const mockAdapter: AxiosAdapter = async (config) => {
   }
 
   try {
-    const data = route.handler({ params, query, body: body ?? {}, session });
+    const data = route.handler({ params, query, body: body ?? {}, session: session ?? ({ user: { role: 'anon' }, student: null, employee: null } as never) });
     // Бодит API шиг объект хуулбар буцаана
     return respond(config, method === 'POST' ? 201 : 200, { data: structuredClone(data) });
   } catch (err) {

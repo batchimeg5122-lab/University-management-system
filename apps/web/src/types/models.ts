@@ -183,12 +183,18 @@ export interface Enrollment {
   teacher_name?: string | null;
   class_name?: string | null;
   semester_name?: string;
+  /** Баталгаажаагүй үеийн явцын оноо (зөвхөн /grades/me) */
+  progress?: GradeProgress;
 }
 
 /** schedules table-ийн мөр */
 export interface ScheduleRecord {
   id: string;
   course_id: string;
+  session_type?: 'lecture' | 'seminar' | 'lab' | 'exam';
+  is_online?: boolean;
+  group_id?: string | null;
+  note?: string | null;
   room: string | null;
   building: string | null;
   day_of_week: number;
@@ -198,6 +204,12 @@ export interface ScheduleRecord {
 
 /** API-аас ирэх хуваарь (courses JOIN-той) */
 export interface Schedule extends ScheduleRecord {
+  session_type?: 'lecture' | 'seminar' | 'lab' | 'exam';
+  is_online?: boolean;
+  /** Нэгдсэн лекцийн бүлэг */
+  group_id?: string | null;
+  note?: string | null;
+  student_count?: number;
   // JOIN (давхцал шалгах, шүүхэд хэрэгтэй)
   semester_id?: string;
   class_id: string | null;
@@ -283,6 +295,8 @@ export interface AuditLog {
   old_data: Record<string, unknown> | null;
   new_data: Record<string, unknown> | null;
   ip_address: string | null;
+  /** WEB / MOBILE (API тооцоолно) */
+  source?: 'WEB' | 'MOBILE';
   created_at: string;
 }
 
@@ -297,6 +311,92 @@ export interface UserDetail {
     must_change_password: boolean;
     banned_until: string | null;
   } | null;
+}
+
+export interface CourseMaterial {
+  id: string;
+  course_id: string;
+  uploaded_by: string | null;
+  title: string;
+  description: string | null;
+  file_path: string;
+  file_name: string;
+  mime_type: string | null;
+  size_bytes: number;
+  is_published: boolean;
+  created_at: string;
+  updated_at?: string;
+  // JOIN
+  can_preview?: boolean;
+  uploaded_by_name?: string | null;
+  subject_code?: string;
+  subject_name?: string;
+  class_name?: string | null;
+}
+
+export interface MaterialStats {
+  total_students: number;
+  by_material: Record<string, { students: number; downloads: number }>;
+}
+
+export interface MaterialAccessRow {
+  student_id: string;
+  student_code: string;
+  student_name: string;
+  downloaded: boolean;
+  download_count: number;
+  first_at: string | null;
+  last_at: string | null;
+}
+
+export interface MaterialAccessDetail {
+  material: { id: string; title: string };
+  total_students: number;
+  downloaded_count: number;
+  students: MaterialAccessRow[];
+}
+
+export interface GradeProgress {
+  items: { id: string; name: string; max_score: number; score: number | null }[];
+  earned: number;
+  graded_max: number;
+  total_max: number;
+  percent: number | null;
+  collected_percent: number | null;
+  remaining_max: number;
+}
+
+export interface StudentCertificate {
+  id: string;
+  student_id: string;
+  number: string;
+  verify_code: string;
+  purpose: string;
+  purpose_note: string | null;
+  include_gpa: boolean;
+  snapshot: {
+    full_name: string;
+    last_name: string;
+    first_name: string;
+    student_code: string;
+    register_number: string | null;
+    program_name: string | null;
+    department_name: string | null;
+    class_name: string | null;
+    year_level: number | null;
+    enrollment_year: number | null;
+    status: string;
+    semester: string | null;
+    course_count: number;
+    gpa: number | null;
+    earned_credits: number | null;
+  };
+  issued_at: string;
+  valid_until: string | null;
+  revoked_at: string | null;
+  is_valid: boolean;
+  student_code?: string;
+  student_name?: string;
 }
 
 export interface Session {

@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { Plus, Receipt } from 'lucide-react';
-import { Button, DataTable, PageHeader, Panel, SearchInput, Select } from '@/components/ui';
+import { Layers, Plus, Receipt } from 'lucide-react';
+import { Button, DataTable, ExportButton, PageHeader, Panel, SearchInput, Select } from '@/components/ui';
+import { exportExcel } from '@/lib/excel';
 import { InvoiceStatusBadge } from '@/components/ui/StatusBadge';
+import { BulkInvoiceModal } from '@/features/finance/components/BulkInvoiceModal';
 import { InvoiceModal } from '@/features/finance/components/InvoiceModal';
 import { PaymentModal } from '@/features/finance/components/PaymentModal';
 import { useInvoices } from '@/features/finance/hooks';
@@ -22,6 +24,7 @@ export default function InvoicesPage() {
   const { data, isLoading, error, refetch } = useInvoices({ ...filters, semester_id: semesterId });
   const [editing, setEditing] = useState<Invoice | null | 'new'>(null);
   const [paying, setPaying] = useState<Invoice | null>(null);
+  const [bulk, setBulk] = useState(false);
 
   const totals = data?.reduce((s, i) => ({ net: s.net + i.net_amount, paid: s.paid + i.paid_amount }), { net: 0, paid: 0 });
 
@@ -30,7 +33,34 @@ export default function InvoicesPage() {
       <PageHeader
         title="Нэхэмжлэл"
         description="Оюутны сургалтын төлбөрийн нэхэмжлэл, хөнгөлөлт, үлдэгдэл."
-        actions={can('finance') && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing('new')}>Нэхэмжлэл үүсгэх</Button>}
+        actions={
+          <>
+            <ExportButton
+              disabled={!data?.length}
+              onExport={() =>
+                exportExcel('nekhemjlel', 'Нэхэмжлэл', [
+                  { header: 'Дугаар', value: (r: Invoice) => r.invoice_number },
+                  { header: 'Оюутны код', value: (r) => r.student_code },
+                  { header: 'Оюутан', value: (r) => r.student_name, width: 28 },
+                  { header: 'Улирал', value: (r) => r.semester_name, width: 18 },
+                  { header: 'Сургалтын төлбөр', value: (r) => Number(r.tuition_amount), width: 18 },
+                  { header: 'Хөнгөлөлт', value: (r) => Number(r.discount_amount) },
+                  { header: 'Төлөх', value: (r) => Number(r.net_amount) },
+                  { header: 'Төлсөн', value: (r) => Number(r.paid_amount) },
+                  { header: 'Үлдэгдэл', value: (r) => Math.max(0, Number(r.net_amount) - Number(r.paid_amount)) },
+                  { header: 'Төлөх хугацаа', value: (r) => (r.due_date ? formatDate(r.due_date) : '') },
+                  { header: 'Төлөв', value: (r) => INVOICE_STATUS_LABEL[r.status] },
+                ], data ?? [])
+              }
+            />
+            {can('finance') && (
+              <>
+                <Button icon={<Layers className="h-4 w-4" />} onClick={() => setBulk(true)}>Бөөнөөр үүсгэх</Button>
+                <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing('new')}>Нэхэмжлэл үүсгэх</Button>
+              </>
+            )}
+          </>
+        }
       />
       <Panel flush>
         <div className="flex flex-col gap-2 border-b border-line px-4 py-3 lg:flex-row lg:items-center">
@@ -76,6 +106,7 @@ export default function InvoicesPage() {
       </Panel>
       <InvoiceModal open={!!editing} invoice={editing === 'new' ? null : editing} onClose={() => setEditing(null)} />
       <PaymentModal invoice={paying} onClose={() => setPaying(null)} />
+      <BulkInvoiceModal open={bulk} onClose={() => setBulk(false)} />
     </>
   );
 }

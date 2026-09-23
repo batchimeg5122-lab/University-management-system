@@ -103,7 +103,7 @@ export default function SchedulesPage() {
     <>
       <PageHeader
         title="Нэгдсэн хичээлийн хуваарь"
-        description="Сургуулийн бүх ангийн хуваарь нэг дор. Нэг цагт анги, багш, өрөө давхцахыг систем зөвшөөрөхгүй."
+        description="Сургуулийн бүх ангийн хуваарь нэг дор. Нэг багш нэг өрөөнд олон ангид лекц уншиж болно. Давхцлыг систем шалгана."
         actions={
           <>
             <Select className="w-56" value={activeSemester} onChange={(e) => setSemesterId(e.target.value)} options={(semesters ?? []).map((s) => ({ value: s.id, label: `${s.academic_year} ${s.name}` }))} />
@@ -201,6 +201,7 @@ export default function SchedulesPage() {
         draft={draft ?? undefined}
         courses={editing ? courses ?? [] : draft?.course_id ? courses ?? [] : formCourses}
         semesterSchedules={rows}
+        semesterId={activeSemester}
       />
     </>
   );

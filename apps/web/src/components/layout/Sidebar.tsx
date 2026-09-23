@@ -14,7 +14,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <aside className="flex h-full w-64 flex-col border-r border-line bg-white">
       <div className="flex h-14 items-center gap-2.5 px-5">
-        <img src="/logo.svg" alt="" className="h-7 w-7" />
+        <img src="/logo.png" alt="" className="h-7 w-7" />
         <div className="leading-tight">
           <p className="text-[14px] font-semibold text-ink">Их Засаг</p>
           <p className="text-[11.5px] text-faint">Сургалт, санхүүгийн систем</p>

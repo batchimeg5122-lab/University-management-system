@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { BrandLogo } from '@/components/brand/BrandLogo';
 import { Button, Input } from '@/components/ui';
+import { MfaRequiredError } from '@/contexts/AuthContext';
 import { useAuth } from '@/hooks/useAuth';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { errorMessage } from '@/lib/api';
@@ -33,7 +34,7 @@ const DEMO: { role: UserRole; name: string }[] = [
 
 export default function LoginPage() {
   useDocumentTitle('Нэвтрэх');
-  const { session, signIn, signInDemo } = useAuth();
+  const { session, signIn, signInDemo, verifyMfa, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [identifier, setIdentifier] = useState('');
@@ -42,6 +43,14 @@ export default function LoginPage() {
   const [pending, setPending] = useState<string | null>(null);
   const [bgLoaded, setBgLoaded] = useState(false);
   const [bgFailed, setBgFailed] = useState(false);
+  const [mfaFactor, setMfaFactor] = useState<string | null>(null);
+  // Өөр төхөөрөмжөөс нэвтэрсэн / session хаагдсан мэдэгдэл
+  const [notice] = useState(() => {
+    const n = sessionStorage.getItem('auth-notice');
+    sessionStorage.removeItem('auth-notice');
+    return n;
+  });
+  const [code, setCode] = useState('');
 
   if (session) return <Navigate to={ROLE_HOME[session.user.role]} replace />;
 
@@ -58,7 +67,27 @@ export default function LoginPage() {
       const s = await signIn(identifier, password);
       goHome(s.user.role);
     } catch (err) {
+      if (err instanceof MfaRequiredError) {
+        setMfaFactor(err.factorId);
+        return;
+      }
       setError(errorMessage(err));
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const onVerify = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!mfaFactor) return;
+    setError('');
+    setPending('mfa');
+    try {
+      const s = await verifyMfa(mfaFactor, code);
+      goHome(s.user.role);
+    } catch (err) {
+      setError(errorMessage(err));
+      setCode('');
     } finally {
       setPending(null);
     }
@@ -76,7 +105,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+    <div className="grid min-h-screen lg:grid-cols-[minmax(0,5fr)_minmax(0,5fr)]">
       <aside className="relative hidden overflow-hidden bg-accent text-white lg:block">
         {/* Дэвсгэр зураг: public/brand/login-bg.jpg. Байхгүй бол зөвхөн өнгөн дэвсгэр харагдана */}
         {!bgFailed && (
@@ -106,9 +135,6 @@ export default function LoginPage() {
             <h1 className="max-w-md text-[34px] font-semibold leading-[1.15] tracking-[-0.02em] [text-shadow:0_1px_24px_rgba(10,25,50,0.35)]">
               Сургалт, санхүүгийн нэгдсэн систем
             </h1>
-            <p className="mt-4 max-w-sm text-[15px] leading-relaxed text-white/85 [text-shadow:0_1px_16px_rgba(10,25,50,0.4)]">
-              Хоёр цогцолбор, есөн сургуулийн оюутан, багш, хичээл, дүн, төлбөрийн мэдээлэл нэг дор.
-            </p>
           </div>
 
           <div>
@@ -129,8 +155,46 @@ export default function LoginPage() {
             <span className="text-[15px] font-semibold">{BRAND.name}</span>
           </div>
 
+          {mfaFactor ? (
+            <>
+              <h2 className="text-2xl font-semibold tracking-[-0.01em] text-ink">Хоёр шатлалт баталгаажуулалт</h2>
+              <p className="mt-1.5 text-sm text-muted">Google Authenticator / Microsoft Authenticator апп дахь 6 оронтой кодыг оруулна уу.</p>
+              <form onSubmit={onVerify} className="mt-7 flex flex-col gap-4">
+                <Input
+                  label="Баталгаажуулах код"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  maxLength={7}
+                  placeholder="123 456"
+                  className="num text-center text-lg tracking-[0.4em]"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/[^\d ]/g, ''))}
+                  required
+                />
+                {error && <p className="rounded-field bg-danger-soft px-3 py-2 text-[13px] text-danger">{error}</p>}
+                <Button type="submit" variant="primary" className="w-full" loading={pending === 'mfa'} disabled={code.replace(/\s/g, '').length !== 6}>
+                  Баталгаажуулах
+                </Button>
+                <button
+                  type="button"
+                  className="text-[13px] text-muted hover:text-ink"
+                  onClick={async () => {
+                    await signOut();
+                    setMfaFactor(null);
+                    setCode('');
+                    setError('');
+                  }}
+                >
+                  ← Өөр эрхээр нэвтрэх
+                </button>
+              </form>
+            </>
+          ) : (
+          <>
           <h2 className="text-2xl font-semibold tracking-[-0.01em] text-ink">Нэвтрэх</h2>
           <p className="mt-1.5 text-sm text-muted">Сургуулийн и-мэйл эсвэл оюутны кодоо ашиглана уу.</p>
+          {notice && !error && <p className="mt-3 rounded-field bg-warn-soft px-3 py-2 text-[13px] text-warn">{notice}</p>}
 
           <form onSubmit={onSubmit} className="mt-7 flex flex-col gap-4">
             <Input
@@ -156,6 +220,8 @@ export default function LoginPage() {
               Нэвтрэх
             </Button>
           </form>
+          </>
+          )}
 
           {env.useMock && (
             <div className="mt-10">

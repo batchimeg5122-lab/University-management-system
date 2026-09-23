@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, Plus } from 'lucide-react';
-import { Button, DataTable, PageHeader, Panel, SearchInput, Select } from '@/components/ui';
+import { FileUp, GraduationCap, Plus } from 'lucide-react';
+import { Button, DataTable, ExportButton, PageHeader, Panel, SearchInput, Select } from '@/components/ui';
 import { StudentStatusBadge } from '@/components/ui/StatusBadge';
 import { useClasses } from '@/features/classes/hooks';
 import { StudentFormModal } from '@/features/students/components/StudentFormModal';
+import { StudentImportModal } from '@/features/students/components/StudentImportModal';
 import { useStudents } from '@/features/students/hooks';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useRole } from '@/hooks/useRole';
 import { STUDENT_STATUS_LABEL } from '@/lib/constants';
+import { exportExcel } from '@/lib/excel';
 
 export default function StudentsPage() {
   useDocumentTitle('Оюутан');
@@ -18,13 +20,43 @@ export default function StudentsPage() {
   const { data, isLoading, error, refetch } = useStudents(filters);
   const { data: classes } = useClasses();
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   return (
     <>
       <PageHeader
         title="Оюутан"
         description="Оюутны бүртгэл, анги, суралцах төлөв."
-        actions={can('students') && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setCreating(true)}>Оюутан бүртгэх</Button>}
+        actions={
+          <>
+            <ExportButton
+              disabled={!data?.length}
+              onExport={() =>
+                exportExcel('oyutan', 'Оюутан', [
+                  { header: 'Оюутны код', value: (r) => r.student_code },
+                  { header: 'Овог', value: (r) => r.last_name, width: 18 },
+                  { header: 'Нэр', value: (r) => r.first_name, width: 18 },
+                  { header: 'Регистр', value: (r) => r.register_number },
+                  { header: 'Анги', value: (r) => r.class_name },
+                  { header: 'Хөтөлбөр', value: (r) => r.program_name, width: 32 },
+                  { header: 'Тэнхим', value: (r) => r.department_name, width: 28 },
+                  { header: 'Элссэн он', value: (r) => r.enrollment_year },
+                  { header: 'Голч', value: (r) => (r.gpa !== null ? Number(r.gpa.toFixed(2)) : null) },
+                  { header: 'Кредит', value: (r) => r.earned_credits },
+                  { header: 'Төлөв', value: (r) => STUDENT_STATUS_LABEL[r.status] },
+                  { header: 'И-мэйл', value: (r) => r.email, width: 32 },
+                  { header: 'Утас', value: (r) => r.phone },
+                ], data ?? [])
+              }
+            />
+            {can('students') && (
+              <>
+                <Button icon={<FileUp className="h-4 w-4" />} onClick={() => setImporting(true)}>Excel импорт</Button>
+                <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setCreating(true)}>Оюутан бүртгэх</Button>
+              </>
+            )}
+          </>
+        }
       />
       <Panel flush>
         <div className="flex flex-col gap-2 border-b border-line px-4 py-3 sm:flex-row sm:items-center">
@@ -52,6 +84,7 @@ export default function StudentsPage() {
         />
       </Panel>
       <StudentFormModal open={creating} onClose={() => setCreating(false)} />
+      <StudentImportModal open={importing} onClose={() => setImporting(false)} />
     </>
   );
 }

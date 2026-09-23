@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { Send } from 'lucide-react';
 import { Button, ConfirmDialog, ErrorState, PageLoader, Panel } from '@/components/ui';
@@ -7,7 +8,7 @@ import { useToast } from '@/components/ui/Toast';
 import { CourseHeader } from '@/features/courses/components/CourseHeader';
 import { useCourseEnrollments, useGradeItems, useSaveGrades, useSubmitGrades } from '@/features/grades/hooks';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
-import { errorMessage } from '@/lib/api';
+import { errorMessage, get } from '@/lib/api';
 import { computeTotal, scoreToGrade } from '@/lib/gpa';
 import { cn } from '@/lib/utils';
 import type { GradeStatus } from '@/types/models';
@@ -49,8 +50,82 @@ export default function CourseGradesPage() {
   const dirty = enrollments?.some((e) => JSON.stringify(parsed(e.id)) !== JSON.stringify(e.scores)) ?? false;
 
   const setScore = (eid: string, itemId: string, value: string, max: number) => {
-    if (value !== '' && (Number(value) < 0 || Number(value) > max)) return;
-    setDraft((d) => ({ ...d, [eid]: { ...d[eid], [itemId]: value } }));
+    const v = value.replace(',', '.').replace(/[^\d.]/g, '');
+    if (v !== '' && (Number.isNaN(Number(v)) || Number(v) < 0 || Number(v) > max)) return;
+    setDraft((d) => ({ ...d, [eid]: { ...d[eid], [itemId]: v } }));
+  };
+
+  // Системийн үнэлгээний шкал (Админ → Тохиргоо) — урьдчилан харахад
+  const { data: publicSettings } = useQuery({
+    queryKey: ['settings', 'public'],
+    queryFn: () => get<{ grading: { scale: { min: number; letter: string; point: number }[] } }>('/settings/public'),
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+  const scale = publicSettings?.grading.scale;
+
+  // ---- Excel шиг хүснэгт: сумаар шилжих, Excel-ээс буулгах ----
+  const focusCell = (row: number, col: number) => {
+    const el = document.querySelector<HTMLInputElement>(`input[data-cell="${row}:${col}"]`);
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  };
+
+  const onCellKey = (ev: KeyboardEvent<HTMLInputElement>, row: number, col: number) => {
+    const input = ev.currentTarget;
+    const atStart = input.selectionStart === 0 && input.selectionEnd === 0;
+    const atEnd = input.selectionStart === input.value.length;
+    if (ev.key === 'Enter' || ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      focusCell(ev.shiftKey && ev.key === 'Enter' ? row - 1 : row + 1, col);
+    } else if (ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      focusCell(row - 1, col);
+    } else if (ev.key === 'ArrowRight' && atEnd) {
+      ev.preventDefault();
+      focusCell(row, col + 1);
+    } else if (ev.key === 'ArrowLeft' && atStart) {
+      ev.preventDefault();
+      focusCell(row, col - 1);
+    } else if (ev.key === 'Escape') {
+      input.blur();
+    }
+  };
+
+  /** Excel / Google Sheets-ээс олон мөр, баганыг нэг дор буулгах */
+  const onCellPaste = (ev: ClipboardEvent<HTMLInputElement>, row: number, col: number) => {
+    const text = ev.clipboardData.getData('text/plain');
+    if (!/[\t\n]/.test(text.trim())) return; // нэг утга бол энгийн paste
+    ev.preventDefault();
+    const lines = text.replace(/\r/g, '').split('\n').filter((l, i, arr) => l !== '' || i < arr.length - 1);
+    let filled = 0;
+    let skipped = 0;
+    const rows = enrollments ?? [];
+    const cols = items ?? [];
+    setDraft((d) => {
+      const next = { ...d };
+      lines.forEach((line, ri) => {
+        const e = rows[row + ri];
+        if (!e || e.grade_status === 'submitted' || e.grade_status === 'approved') return;
+        line.split('\t').forEach((cell, ci) => {
+          const it = cols[col + ci];
+          if (!it) return;
+          const v = cell.trim().replace(',', '.');
+          if (v === '') return;
+          const n = Number(v);
+          if (Number.isNaN(n) || n < 0 || n > it.max_score) {
+            skipped++;
+            return;
+          }
+          next[e.id] = { ...next[e.id], [it.id]: String(n) };
+          filled++;
+        });
+      });
+      return next;
+    });
+    setTimeout(() => (skipped ? toast.error(`${filled} нүд буулгаж, ${skipped} буруу утгыг алгаслаа`) : toast.success(`${filled} нүд буулгалаа`)), 0);
   };
 
   const onSave = async () => {
@@ -100,7 +175,7 @@ export default function CourseGradesPage() {
           <Panel
             flush
             title={`${completeCount} / ${enrollments?.length ?? 0} оюутны дүн бүрэн`}
-            description={items?.map((i) => `${i.name} ${i.max_score}`).join(', ')}
+            description={`${items?.map((i) => `${i.name} ${i.max_score}`).join(', ') ?? ''} · Enter/↑↓←→ шилжих, Excel-ээс хуулж буулгах боломжтой`}
             actions={
               !locked && (
                 <>
@@ -114,7 +189,7 @@ export default function CourseGradesPage() {
               <table className="w-full min-w-[760px] text-sm">
                 <thead>
                   <tr className="border-b border-line text-[12.5px] text-muted">
-                    <th className="sticky left-0 z-10 bg-white px-5 py-2.5 text-left font-medium">Оюутан</th>
+                    <th className="sticky left-0 z-10 bg-surface px-5 py-2.5 text-left font-medium">Оюутан</th>
                     {items?.map((it) => (
                       <th key={it.id} className="px-2 py-2.5 text-center font-medium">
                         <span className="block">{it.name}</span>
@@ -127,28 +202,29 @@ export default function CourseGradesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {enrollments?.map((e) => {
+                  {enrollments?.map((e, ri) => {
                     const scores = parsed(e.id);
                     const { total, complete } = computeTotal(scores, items ?? []);
-                    const grade = complete ? scoreToGrade(total) : null;
+                    const grade = complete ? scoreToGrade(total, scale) : null;
                     const rowLocked = e.grade_status === 'submitted' || e.grade_status === 'approved';
                     return (
                       <tr key={e.id} className="border-b border-line last:border-0 hover:bg-paper/40">
-                        <td className="sticky left-0 z-10 bg-white px-5 py-2">
+                        <td className="sticky left-0 z-10 bg-surface px-5 py-2">
                           <p className="whitespace-nowrap font-medium text-ink">{e.student_name}</p>
                           <p className="text-xs text-faint">{e.student_code}</p>
                         </td>
-                        {items?.map((it) => (
+                        {items?.map((it, ci) => (
                           <td key={it.id} className="px-2 py-2 text-center">
                             <input
-                              type="number"
+                              type="text"
                               inputMode="decimal"
-                              step="0.5"
-                              min={0}
-                              max={it.max_score}
+                              data-cell={`${ri}:${ci}`}
                               disabled={rowLocked}
                               value={draft[e.id]?.[it.id] ?? ''}
                               onChange={(ev) => setScore(e.id, it.id, ev.target.value, it.max_score)}
+                              onKeyDown={(ev) => onCellKey(ev, ri, ci)}
+                              onPaste={(ev) => onCellPaste(ev, ri, ci)}
+                              onFocus={(ev) => ev.currentTarget.select()}
                               aria-label={`${e.student_name}, ${it.name}`}
                               className="num h-8 w-16 rounded-md border border-transparent bg-paper text-center text-sm text-ink transition-colors [appearance:textfield] hover:border-line focus:border-accent focus:bg-white focus:outline-none focus:ring-2 focus:ring-accent/15 disabled:bg-transparent disabled:text-ink-soft [&::-webkit-inner-spin-button]:appearance-none"
                             />

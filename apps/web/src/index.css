@@ -3,6 +3,56 @@
 @tailwind utilities;
 
 @layer base {
+  /* Цайвар (анхдагч) — RGB сувгаар, tailwind-ийн /opacity ажиллана */
+  :root {
+    --c-paper: 246 247 249;
+    --c-surface: 255 255 255;
+    --c-ink: 23 32 51;
+    --c-ink-soft: 58 69 87;
+    --c-muted: 91 101 118;
+    --c-faint: 138 147 163;
+    --c-line: 227 230 235;
+    --c-line-strong: 205 210 218;
+    --c-accent: 30 75 143;
+    --c-accent-hover: 24 61 117;
+    --c-accent-soft: 234 240 249;
+    --c-accent-ink: 21 56 107;
+    --c-gold: 184 134 43;
+    --c-gold-soft: 251 243 227;
+    --c-success: 31 122 77;
+    --c-success-soft: 231 244 236;
+    --c-danger: 180 35 24;
+    --c-danger-soft: 253 236 234;
+    --c-warn: 181 71 8;
+    --c-warn-soft: 254 244 230;
+    color-scheme: light;
+  }
+
+  /* Бараан — mobile апп-ын палитртай ижил */
+  .dark {
+    --c-paper: 14 19 27;
+    --c-surface: 22 29 40;
+    --c-ink: 232 236 242;
+    --c-ink-soft: 196 203 214;
+    --c-muted: 152 162 179;
+    --c-faint: 107 117 134;
+    --c-line: 38 49 66;
+    --c-line-strong: 52 66 87;
+    --c-accent: 79 125 199;
+    --c-accent-hover: 98 142 212;
+    --c-accent-soft: 26 42 68;
+    --c-accent-ink: 170 196 240;
+    --c-gold: 217 169 85;
+    --c-gold-soft: 46 38 22;
+    --c-success: 76 184 131;
+    --c-success-soft: 20 41 31;
+    --c-danger: 240 119 108;
+    --c-danger-soft: 52 25 26;
+    --c-warn: 240 163 94;
+    --c-warn-soft: 51 36 15;
+    color-scheme: dark;
+  }
+
   html {
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -21,7 +71,7 @@
 
 @layer components {
   .field {
-    @apply h-9 w-full rounded-field border border-line bg-white px-3 text-sm text-ink placeholder:text-faint
+    @apply h-9 w-full rounded-field border border-line bg-surface px-3 text-sm text-ink placeholder:text-faint
       transition-colors hover:border-line-strong focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/15
       disabled:bg-paper disabled:text-muted;
   }
@@ -35,4 +85,33 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Dark mode: хуучин "bg-white" классуудыг гадаргуугийн өнгөөр солино (38 файл засахгүйгээр) */
+.dark .bg-white,
+.dark .hover\:bg-white:hover {
+  --tw-bg-opacity: 1;
+  background-color: rgb(var(--c-surface) / var(--tw-bg-opacity));
+}
+.dark .bg-white\/90 {
+  background-color: rgb(var(--c-surface) / 0.9);
+}
+.dark img[src$='logo.png'] {
+  background: #fff;
+  border-radius: 8px;
+}
+
+/* Хэвлэх: зөвхөн тодорхойлолтын хуудас гарна */
+@media print {
+  body {
+    background: #fff;
+  }
+  .print\:hidden {
+    display: none !important;
+  }
+}
+
+@page {
+  size: A4;
+  margin: 16mm;
 }

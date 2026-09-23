@@ -4,6 +4,7 @@ import { Pencil } from 'lucide-react';
 import { Avatar, Button, DataTable, ErrorState, PageHeader, PageLoader, Panel, Segmented, StatStrip } from '@/components/ui';
 import { GradeStatusBadge, InvoiceStatusBadge, StudentStatusBadge } from '@/components/ui/StatusBadge';
 import { StudentFormModal } from '@/features/students/components/StudentFormModal';
+import { TranscriptButton } from '@/features/transcript/components/TranscriptButton';
 import { useStudent } from '@/features/students/hooks';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useRole } from '@/hooks/useRole';
@@ -36,6 +37,7 @@ export default function StudentDetailPage() {
         actions={
           <>
             <StudentStatusBadge status={student.status} />
+            <TranscriptButton student={student} enrollments={enrollments} />
             {can('students') && <Button icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setEditing(true)}>Засах</Button>}
           </>
         }

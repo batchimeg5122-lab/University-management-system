@@ -5,14 +5,14 @@
  */
 import type {
   AppUser, Attendance, AttendanceStatus, ClassGroup, Course, Department, EmployeeView, Enrollment,
-  Invoice, Notification, Payment, Program, Schedule, ScheduleRecord, Semester, Session, StudentView, Subject, UserRole,
+  CourseMaterial, Invoice, Notification, Payment, Program, Schedule, ScheduleRecord, Semester, Session, StudentView, Subject, UserRole,
 } from '@/types/models';
 import type {
   CourseStats, DepartmentReport, FinanceReport, OverviewReport, SchoolReport, StudentSummary,
 } from '@/types/reports';
 import { computeTotal, letterBucket, scoreToGrade, weightedGpa } from '../gpa';
 import { CURRENT_SEMESTER_ID, DEMO_USERS, db, newId, recomputeStudentGpa, syncInvoice } from './db';
-import { conflictMessage, findAllConflicts, findConflicts, toMin } from '@/features/schedules/lib/timetable';
+import { TIME_SLOTS, WEEK_DAYS, conflictMessage, findAllConflicts, findConflicts, overlaps, toMin } from '@/features/schedules/lib/timetable';
 
 export class MockHttpError extends Error {
   constructor(public status: number, message: string) {
@@ -130,6 +130,9 @@ function scheduleView(s: ScheduleRecord): Schedule {
   const c = courseView(raw);
   return {
     ...s,
+    session_type: s.session_type ?? 'lecture',
+    is_online: !!s.is_online,
+    student_count: db.enrollments.filter((e) => e.course_id === s.course_id && e.status !== 'dropped').length,
     semester_id: raw.semester_id,
     class_id: raw.class_id,
     teacher_id: raw.teacher_id,
@@ -151,8 +154,19 @@ function assertScheduleFree(candidate: ScheduleRecord) {
   if (!course) throw new MockHttpError(404, 'Хичээл олдсонгүй.');
   if (toMin(candidate.end_time) <= toMin(candidate.start_time)) throw new MockHttpError(422, 'Дуусах цаг эхлэх цагаас хойш байх ёстой.');
   const entry = { ...candidate, class_id: course.class_id, teacher_id: course.teacher_id };
-  const [first] = findConflicts(entry, semesterSchedules(course.semester_id));
+  const others = semesterSchedules(course.semester_id).filter((s) => s.id !== candidate.id);
+  const [first] = findConflicts(entry, others);
   if (first) throw new MockHttpError(409, conflictMessage(first.kind, first.with));
+}
+
+/** Өрөөний багтаамжийн анхааруулга (хориглохгүй) */
+function capacityWarnings(rows: ScheduleRecord[]): string[] {
+  const first = rows[0];
+  if (!first || first.is_online || !first.room) return [];
+  const room = db.rooms.find((r) => r.code === first.room && r.building === (first.building ?? r.building));
+  if (!room) return [`${first.building ?? ''} ${first.room} өрөө бүртгэлд алга.`];
+  const seats = rows.reduce((sum, r) => sum + db.enrollments.filter((e) => e.course_id === r.course_id && e.status !== 'dropped').length, 0);
+  return seats > room.capacity ? [`Оюутны тоо (${seats}) өрөөний багтаамжаас (${room.capacity}) хэтэрсэн байна.`] : [];
 }
 
 function invoiceView(i: Invoice): Invoice {
@@ -237,6 +251,80 @@ const mockPassword = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
   return Array.from({ length: 10 }, () => chars[Math.floor(Math.random() * chars.length)]).join('') + '7';
 };
+
+// ----- Хичээлийн материал -----
+function materialView(m: CourseMaterial): CourseMaterial {
+  const course = byId(db.courses, m.course_id);
+  const sub = byId(db.subjects, course?.subject_id);
+  return {
+    ...m,
+    uploaded_by_name: byId(db.users, m.uploaded_by)?.full_name ?? null,
+    subject_code: sub?.code,
+    subject_name: sub?.name,
+    class_name: byId(db.classes, course?.class_id)?.code ?? null,
+  };
+}
+
+/** Материал харах эрх: багш өөрийн хичээл, оюутан бүртгэлтэй хичээл, алба бүгд */
+function assertCourseView(ctx: Ctx, courseId: string) {
+  const role = ctx.session.user.role;
+  if (['super_admin', 'academic', 'management'].includes(role)) return;
+  const course = byId(db.courses, courseId);
+  if (!course) throw new MockHttpError(404, 'Хичээл олдсонгүй.');
+  if (role === 'teacher') {
+    if (course.teacher_id !== ctx.session.employee?.id) throw new MockHttpError(403, 'Та зөвхөн өөрийн хичээлд хандах боломжтой.');
+    return;
+  }
+  if (role === 'student') {
+    const enrolled = db.enrollments.some((e) => e.course_id === courseId && e.student_id === ctx.session.student?.id && e.status !== 'dropped');
+    if (!enrolled) throw new MockHttpError(403, 'Та энэ хичээлд бүртгэлгүй байна.');
+    return;
+  }
+  throw new MockHttpError(403, 'Хандах эрх алга.');
+}
+
+function materialForWrite(ctx: Ctx, id: string) {
+  const m = byId(db.course_materials, id);
+  if (!m) throw new MockHttpError(404, 'Материал олдсонгүй.');
+  const course = byId(db.courses, m.course_id)!;
+  const isStaff = ['super_admin', 'academic'].includes(ctx.session.user.role);
+  const isTeacher = ctx.session.user.role === 'teacher' && course.teacher_id === ctx.session.employee?.id;
+  if (!isStaff && !isTeacher) throw new MockHttpError(403, 'Зөвхөн хичээлийн багш материалаа удирдана.');
+  return m;
+}
+
+/** Материалын түр холбоос: mode='inline' үед вэб дээр шууд нээгдэнэ */
+function materialLink(ctx: Ctx, mode: 'download' | 'inline') {
+  const m = byId(db.course_materials, ctx.params.id);
+  if (!m) throw new MockHttpError(404, 'Материал олдсонгүй.');
+  assertCourseView(ctx, m.course_id);
+
+  // Оюутны хандалтыг бүртгэнэ (үзсэн ч, татсан ч тооцно)
+  if (ctx.session.user.role === 'student' && ctx.session.student) {
+    const existing = db.material_access.find((a) => a.material_id === m.id && a.student_id === ctx.session.student!.id);
+    if (existing) {
+      existing.download_count++;
+      existing.last_at = now();
+    } else {
+      db.material_access.push({ id: newId('mac'), material_id: m.id, student_id: ctx.session.student.id, download_count: 1, first_at: now(), last_at: now() });
+    }
+  }
+
+  // Туршилтын горимд бодит файл байхгүй тул жишиг текст үзүүлнэ
+  const text = `${m.title}\n${m.description ?? ''}\n\nТуршилтын горимын жишээ агуулга. Supabase холбогдсон үед жинхэнэ файл нээгдэнэ.`;
+  return {
+    url: `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`,
+    file_name: mode === 'download' ? `${m.file_name.replace(/\.[^.]+$/, '')}.txt` : m.file_name,
+    mime_type: 'text/plain',
+    can_preview: true,
+    expires_in: 300,
+  };
+}
+
+function certificateView(c: any) {
+  return { ...c, is_valid: !c.revoked_at && (!c.valid_until || c.valid_until >= new Date().toISOString().slice(0, 10)) };
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
@@ -679,7 +767,30 @@ export const routes: Record<string, Handler> = {
     return db.enrollments
       .filter((e) => e.student_id === ctx.session.student?.id)
       .map(enrollmentView)
-      .map((e) => (e.grade_status === 'approved' ? e : { ...e, total_score: null, letter_grade: null, gpa_point: null, scores: e.grade_status === 'draft' ? e.scores : {} }));
+      .map((e) => {
+        const items = db.grade_items.filter((i) => i.course_id === e.course_id).sort((a, b) => a.sort_order - b.sort_order);
+        const scores = e.scores ?? {};
+        const graded = items.filter((i) => typeof scores[i.id] === 'number');
+        const earned = graded.reduce((sum, i) => sum + Number(scores[i.id]), 0);
+        const gradedMax = graded.reduce((sum, i) => sum + i.max_score, 0);
+        const totalMax = items.reduce((sum, i) => sum + i.max_score, 0);
+        const approved = e.grade_status === 'approved';
+        return {
+          ...e,
+          total_score: approved ? e.total_score : null,
+          letter_grade: approved ? e.letter_grade : null,
+          gpa_point: approved ? e.gpa_point : null,
+          progress: {
+            items: items.map((i) => ({ id: i.id, name: i.name, max_score: i.max_score, score: typeof scores[i.id] === 'number' ? scores[i.id] : null })),
+            earned: Math.round(earned * 100) / 100,
+            graded_max: gradedMax,
+            total_max: totalMax,
+            percent: gradedMax ? Math.round((earned / gradedMax) * 1000) / 10 : null,
+            collected_percent: totalMax ? Math.round((earned / totalMax) * 1000) / 10 : null,
+            remaining_max: Math.max(0, totalMax - gradedMax),
+          },
+        };
+      });
   },
 
   // ----- ATTENDANCE -----
@@ -743,46 +854,238 @@ export const routes: Record<string, Handler> = {
   },
   'POST /schedules': (ctx) => {
     allow(ctx, 'super_admin', 'academic');
-    required(ctx.body, 'course_id', 'day_of_week', 'start_time', 'end_time', 'room');
+    required(ctx.body, 'course_ids', 'day_of_week', 'start_time', 'end_time');
     const b = ctx.body;
-    const s: ScheduleRecord = {
-      id: newId('sch'),
-      course_id: b.course_id,
-      room: String(b.room).trim(),
-      building: b.building || null,
+    const courseIds: string[] = [...new Set(b.course_ids as string[])];
+    const courses = courseIds.map((id) => byId(db.courses, id));
+    if (courses.some((c) => !c)) throw new MockHttpError(404, 'Зарим хичээл олдсонгүй.');
+    if (new Set(courses.map((c) => c!.semester_id)).size > 1) throw new MockHttpError(422, 'Нэгдсэн лекцийн хичээлүүд нэг улиралд байх ёстой.');
+    const classIds = courses.map((c) => c!.class_id);
+    if (new Set(classIds).size !== classIds.length) throw new MockHttpError(422, 'Нэг ангийг хоёр удаа сонгосон байна.');
+    const teachers = new Set(courses.map((c) => c!.teacher_id).filter(Boolean));
+    if (courseIds.length > 1 && teachers.size > 1) throw new MockHttpError(422, 'Нэгдсэн лекцийг нэг багш заана.');
+    const sessionType = b.session_type ?? 'lecture';
+    if (courseIds.length > 1 && sessionType !== 'lecture' && sessionType !== 'exam') {
+      throw new MockHttpError(422, 'Зөвхөн лекц, шалгалтыг хэд хэдэн ангид нэгтгэж болно.');
+    }
+    const isOnline = !!b.is_online;
+    if (!isOnline && !b.room) throw new MockHttpError(422, 'Танхимын хичээлд өрөө сонгоно уу.');
+
+    const groupId = courseIds.length > 1 ? newId('grp') : null;
+    const shared = {
       day_of_week: Number(b.day_of_week),
       start_time: `${String(b.start_time).slice(0, 5)}:00`,
       end_time: `${String(b.end_time).slice(0, 5)}:00`,
+      room: isOnline ? null : String(b.room).trim(),
+      building: isOnline ? null : b.building || null,
+      session_type: sessionType,
+      is_online: isOnline,
+      note: b.note || null,
+      group_id: groupId,
     };
-    assertScheduleFree(s);
-    db.schedules.push(s);
-    audit(ctx, 'CREATE_SCHEDULE', 'schedules', s.id);
-    return scheduleView(s);
+
+    const created: ScheduleRecord[] = courseIds.map((course_id) => ({ id: newId('sch'), course_id, ...shared }));
+    created.forEach((row) => assertScheduleFree(row));
+    db.schedules.push(...created);
+    audit(ctx, groupId ? 'CREATE_MERGED_SCHEDULE' : 'CREATE_SCHEDULE', 'schedules', created[0].id, { courses: courseIds });
+    return { schedules: created.map(scheduleView), warnings: capacityWarnings(created) };
   },
   'PATCH /schedules/:id': (ctx) => {
     allow(ctx, 'super_admin', 'academic');
     const current = byId(db.schedules, ctx.params.id);
     if (!current) throw new MockHttpError(404, 'Хуваарь олдсонгүй.');
     const b = ctx.body;
-    const next: ScheduleRecord = {
-      ...current,
-      course_id: b.course_id ?? current.course_id,
+    const group = current.group_id ? db.schedules.filter((s) => s.group_id === current.group_id) : [current];
+
+    const patch = {
       day_of_week: b.day_of_week !== undefined ? Number(b.day_of_week) : current.day_of_week,
       start_time: b.start_time ? `${String(b.start_time).slice(0, 5)}:00` : current.start_time,
       end_time: b.end_time ? `${String(b.end_time).slice(0, 5)}:00` : current.end_time,
-      room: b.room !== undefined ? String(b.room).trim() || null : current.room,
+      session_type: b.session_type ?? current.session_type ?? 'lecture',
+      is_online: b.is_online !== undefined ? !!b.is_online : !!current.is_online,
+      note: b.note !== undefined ? b.note || null : current.note ?? null,
+      room: b.room !== undefined ? (b.room ? String(b.room).trim() : null) : current.room,
       building: b.building !== undefined ? b.building || null : current.building,
     };
-    assertScheduleFree(next);
-    Object.assign(current, { course_id: next.course_id, day_of_week: next.day_of_week, start_time: next.start_time, end_time: next.end_time, room: next.room, building: next.building });
+    if (patch.is_online) {
+      patch.room = null;
+      patch.building = null;
+    } else if (!patch.room) throw new MockHttpError(422, 'Танхимын хичээлд өрөө сонгоно уу.');
+
+    group.forEach((row) => assertScheduleFree({ ...row, ...patch }));
+    group.forEach((row) => Object.assign(row, patch));
     audit(ctx, 'UPDATE_SCHEDULE', 'schedules', current.id, b);
-    return scheduleView(current);
+    return { schedules: group.map(scheduleView), warnings: capacityWarnings(group) };
   },
   'DELETE /schedules/:id': (ctx) => {
     allow(ctx, 'super_admin', 'academic');
-    const i = db.schedules.findIndex((s) => s.id === ctx.params.id);
-    if (i >= 0) db.schedules.splice(i, 1);
-    audit(ctx, 'DELETE_SCHEDULE', 'schedules', ctx.params.id);
+    const current = byId(db.schedules, ctx.params.id);
+    if (!current) throw new MockHttpError(404, 'Хуваарь олдсонгүй.');
+    const withGroup = ctx.query.group === 'true' && !!current.group_id;
+    const targets = withGroup ? db.schedules.filter((s) => s.group_id === current.group_id) : [current];
+    targets.forEach((t) => db.schedules.splice(db.schedules.indexOf(t), 1));
+    audit(ctx, 'DELETE_SCHEDULE', 'schedules', current.id, { group: withGroup });
+    return { deleted: true, count: targets.length };
+  },
+  'GET /schedules/suggestions': (ctx) => {
+    allow(ctx, 'super_admin', 'academic');
+    const courseIds = String(ctx.query.course_ids ?? '').split(',').filter(Boolean);
+    const courses = courseIds.map((id) => byId(db.courses, id)).filter(Boolean);
+    if (!courses.length) throw new MockHttpError(404, 'Хичээл олдсонгүй.');
+    const semesterId = courses[0]!.semester_id;
+    const existing = semesterSchedules(semesterId);
+    const seats = courseIds.reduce((sum, id) => sum + db.enrollments.filter((e) => e.course_id === id && e.status !== 'dropped').length, 0);
+
+    const slots: { day_of_week: number; start_time: string; end_time: string; rooms: { building: string; code: string; capacity: number }[] }[] = [];
+    WEEK_DAYS.forEach((day) => {
+      TIME_SLOTS.forEach((slot) => {
+        const blocked = courses.some((c) =>
+          findConflicts(
+            { course_id: c!.id, class_id: c!.class_id, teacher_id: c!.teacher_id, day_of_week: day, start_time: slot.start, end_time: slot.end, room: null, building: null, is_online: true },
+            existing,
+          ).length > 0,
+        );
+        if (blocked) return;
+        const busy = new Set(
+          existing
+            .filter((e) => !e.is_online && e.room && overlaps(e, { day_of_week: day, start_time: slot.start, end_time: slot.end }))
+            .map((e) => `${e.building ?? ''}|${(e.room ?? '').toLowerCase()}`),
+        );
+        const free = db.rooms
+          .filter((r) => r.is_active && r.capacity >= seats && !busy.has(`${r.building}|${r.code.toLowerCase()}`))
+          .sort((a, b) => a.capacity - b.capacity)
+          .slice(0, 5)
+          .map((r) => ({ building: r.building, code: r.code, capacity: r.capacity }));
+        slots.push({ day_of_week: day, start_time: slot.start, end_time: slot.end, rooms: free });
+      });
+    });
+    return { total_students: seats, slots: slots.slice(0, 20) };
+  },
+
+  // ----- ROOMS -----
+  'GET /rooms': (ctx) => {
+    const semesterId = ctx.query.semester_id ?? CURRENT_SEMESTER_ID;
+    const day = ctx.query.day_of_week ? Number(ctx.query.day_of_week) : undefined;
+    const start = ctx.query.start_time;
+    const end = ctx.query.end_time;
+    const schedules = semesterSchedules(semesterId);
+    return db.rooms
+      .filter((r) => r.is_active && (!ctx.query.building || r.building === ctx.query.building))
+      .map((r) => {
+        const rows = schedules.filter((s) => !s.is_online && (s.room ?? '').toLowerCase() === r.code.toLowerCase() && (s.building ?? '') === r.building);
+        const clash = day && start && end ? rows.find((s) => overlaps(s, { day_of_week: day, start_time: start, end_time: end })) : undefined;
+        return { ...r, weekly_sessions: rows.length, busy: !!clash, busy_with: clash ? `${clash.subject_name}, ${clash.class_name}` : null };
+      });
+  },
+  'POST /rooms': (ctx) => {
+    allow(ctx, 'super_admin', 'academic');
+    required(ctx.body, 'building', 'code', 'capacity');
+    if (db.rooms.some((r) => r.building === ctx.body.building && r.code === ctx.body.code)) throw new MockHttpError(409, 'Ийм өрөө бүртгэлтэй байна.');
+    const room = { id: newId('room'), building: ctx.body.building, code: String(ctx.body.code).trim(), capacity: Number(ctx.body.capacity), room_type: ctx.body.room_type ?? 'lecture', note: ctx.body.note || null, is_active: true };
+    db.rooms.push(room);
+    audit(ctx, 'CREATE_ROOM', 'rooms', room.id);
+    return room;
+  },
+  'PATCH /rooms/:id': (ctx) => {
+    allow(ctx, 'super_admin', 'academic');
+    const room = db.rooms.find((r) => r.id === ctx.params.id);
+    if (!room) throw new MockHttpError(404, 'Өрөө олдсонгүй.');
+    Object.assign(room, ctx.body, ctx.body.capacity ? { capacity: Number(ctx.body.capacity) } : {});
+    return room;
+  },
+
+  // ----- COURSE MATERIALS -----
+  'GET /courses/:id/materials': (ctx) => {
+    assertCourseView(ctx, ctx.params.id);
+    return db.course_materials
+      .filter((m) => m.course_id === ctx.params.id && (ctx.session.user.role !== 'student' || m.is_published))
+      .map(materialView)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  },
+  'GET /courses/:id/materials/stats': (ctx) => {
+    allow(ctx, 'teacher', 'academic', 'management', 'super_admin');
+    assertCourseView(ctx, ctx.params.id);
+    const materials = db.course_materials.filter((m) => m.course_id === ctx.params.id);
+    const total_students = db.enrollments.filter((e) => e.course_id === ctx.params.id && e.status !== 'dropped').length;
+    const by_material: Record<string, { students: number; downloads: number }> = {};
+    materials.forEach((m) => {
+      const rows = db.material_access.filter((a) => a.material_id === m.id);
+      by_material[m.id] = { students: rows.length, downloads: rows.reduce((sum, r) => sum + r.download_count, 0) };
+    });
+    return { total_students, by_material };
+  },
+  'GET /materials/me': (ctx) => {
+    allow(ctx, 'student');
+    const ids = new Set(db.enrollments.filter((e) => e.student_id === ctx.session.student?.id && e.status !== 'dropped').map((e) => e.course_id));
+    return db.course_materials
+      .filter((m) => ids.has(m.course_id) && m.is_published)
+      .map(materialView)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  },
+  'POST /courses/:id/materials/upload-url': (ctx) => {
+    allow(ctx, 'teacher', 'academic', 'super_admin');
+    assertCourseView(ctx, ctx.params.id);
+    required(ctx.body, 'file_name', 'mime_type', 'size_bytes');
+    if (Number(ctx.body.size_bytes) > 50 * 1024 * 1024) throw new MockHttpError(422, 'Файлын хэмжээ 50MB-аас хэтэрсэн байна.');
+    return { path: `${ctx.params.id}/${newId('file')}`, token: 'mock-token', signed_url: '', bucket: 'course-materials' };
+  },
+  'POST /courses/:id/materials': (ctx) => {
+    allow(ctx, 'teacher', 'academic', 'super_admin');
+    assertCourseView(ctx, ctx.params.id);
+    required(ctx.body, 'title', 'file_path', 'file_name');
+    const m: CourseMaterial = {
+      id: newId('mat'),
+      course_id: ctx.params.id,
+      uploaded_by: ctx.session.user.id,
+      title: ctx.body.title,
+      description: ctx.body.description || null,
+      file_path: ctx.body.file_path,
+      file_name: ctx.body.file_name,
+      mime_type: ctx.body.mime_type || null,
+      size_bytes: Number(ctx.body.size_bytes) || 0,
+      is_published: ctx.body.is_published !== false,
+      created_at: now(),
+    };
+    db.course_materials.unshift(m);
+    audit(ctx, 'ADD_MATERIAL', 'course_materials', m.id, { title: m.title });
+    return materialView(m);
+  },
+  'GET /materials/:id/download': (ctx) => materialLink(ctx, 'download'),
+  'GET /materials/:id/view': (ctx) => materialLink(ctx, 'inline'),
+  'GET /materials/:id/access': (ctx) => {
+    allow(ctx, 'teacher', 'academic', 'management', 'super_admin');
+    const m = byId(db.course_materials, ctx.params.id);
+    if (!m) throw new MockHttpError(404, 'Материал олдсонгүй.');
+    assertCourseView(ctx, m.course_id);
+    const access = db.material_access.filter((a) => a.material_id === m.id);
+    const students = db.enrollments
+      .filter((e) => e.course_id === m.course_id && e.status !== 'dropped')
+      .map((e) => {
+        const a = access.find((x) => x.student_id === e.student_id);
+        const s = studentView(e.student_id);
+        return {
+          student_id: e.student_id,
+          student_code: s.student_code,
+          student_name: s.full_name,
+          downloaded: !!a,
+          download_count: a?.download_count ?? 0,
+          first_at: a?.first_at ?? null,
+          last_at: a?.last_at ?? null,
+        };
+      })
+      .sort((a, b) => Number(b.downloaded) - Number(a.downloaded) || a.student_name.localeCompare(b.student_name));
+    return { material: { id: m.id, title: m.title }, total_students: students.length, downloaded_count: students.filter((x) => x.downloaded).length, students };
+  },
+  'PATCH /materials/:id': (ctx) => {
+    const m = materialForWrite(ctx, ctx.params.id);
+    Object.assign(m, ctx.body);
+    audit(ctx, 'UPDATE_MATERIAL', 'course_materials', m.id, ctx.body);
+    return materialView(m);
+  },
+  'DELETE /materials/:id': (ctx) => {
+    const m = materialForWrite(ctx, ctx.params.id);
+    db.course_materials.splice(db.course_materials.indexOf(m), 1);
+    audit(ctx, 'DELETE_MATERIAL', 'course_materials', m.id);
     return { deleted: true };
   },
 
@@ -889,6 +1192,96 @@ export const routes: Record<string, Handler> = {
     const i = db.notifications.findIndex((n) => n.id === ctx.params.id);
     if (i >= 0) db.notifications.splice(i, 1);
     return { deleted: true };
+  },
+
+  // ----- CERTIFICATES -----
+  'POST /certificates': (ctx) => {
+    allow(ctx, 'student');
+    const student = ctx.session.student!;
+    if (student.status !== 'active') throw new MockHttpError(422, 'Суралцаж буй төлөвтэй оюутан тодорхойлолт авах боломжтой.');
+    const semester = db.semesters.find((s) => s.is_current);
+    const yearLevel = student.enrollment_year ? Math.max(1, new Date().getFullYear() - Number(student.enrollment_year) + 1) : null;
+    const includeGpa = ctx.body.include_gpa === true;
+    const validDays = Number(ctx.body.valid_days) || 30;
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const cert = {
+      id: newId('cert'),
+      student_id: student.id,
+      number: `ТОД-${new Date().getFullYear()}-${String(db.student_certificates.length + 1).padStart(5, '0')}`,
+      verify_code: Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join(''),
+      purpose: ctx.body.purpose ?? 'other',
+      purpose_note: ctx.body.purpose_note || null,
+      include_gpa: includeGpa,
+      snapshot: {
+        full_name: student.full_name,
+        last_name: student.last_name,
+        first_name: student.first_name,
+        student_code: student.student_code,
+        register_number: student.register_number,
+        program_name: student.program_name,
+        department_name: student.department_name,
+        class_name: student.class_name,
+        year_level: yearLevel,
+        enrollment_year: student.enrollment_year,
+        status: student.status,
+        semester: semester ? `${semester.academic_year} оны ${semester.name}` : null,
+        course_count: db.enrollments.filter((e) => e.student_id === student.id).length,
+        gpa: includeGpa ? student.gpa : null,
+        earned_credits: includeGpa ? student.earned_credits : null,
+      },
+      issued_at: now(),
+      valid_until: new Date(Date.now() + validDays * 86400000).toISOString().slice(0, 10),
+      revoked_at: null,
+      is_valid: true,
+      student_code: student.student_code,
+      student_name: student.full_name,
+    };
+    db.student_certificates.unshift(cert);
+    audit(ctx, 'ISSUE_CERTIFICATE', 'student_certificates', cert.id, { number: cert.number });
+    return cert;
+  },
+  'GET /certificates/me': (ctx) => {
+    allow(ctx, 'student');
+    return db.student_certificates.filter((c) => c.student_id === ctx.session.student?.id).map(certificateView);
+  },
+  'GET /certificates': (ctx) => {
+    allow(ctx, 'academic', 'management', 'super_admin');
+    const q = String(ctx.query.q ?? '').toLowerCase();
+    return db.student_certificates
+      .map(certificateView)
+      .filter((c) => !q || [c.student_name, c.student_code, c.number, c.verify_code].some((v) => String(v ?? '').toLowerCase().includes(q)));
+  },
+  'GET /certificates/:id': (ctx) => {
+    const c = db.student_certificates.find((x) => x.id === ctx.params.id);
+    if (!c) throw new MockHttpError(404, 'Тодорхойлолт олдсонгүй.');
+    const isStaff = ['super_admin', 'academic', 'management'].includes(ctx.session.user.role);
+    if (!isStaff && c.student_id !== ctx.session.student?.id) throw new MockHttpError(403, 'Хандах эрхгүй.');
+    return certificateView(c);
+  },
+  'POST /certificates/:id/revoke': (ctx) => {
+    allow(ctx, 'academic', 'super_admin');
+    const c = db.student_certificates.find((x) => x.id === ctx.params.id);
+    if (!c) throw new MockHttpError(404, 'Тодорхойлолт олдсонгүй.');
+    c.revoked_at = now();
+    audit(ctx, 'REVOKE_CERTIFICATE', 'student_certificates', c.id);
+    return certificateView(c);
+  },
+  'GET /certificates/verify/:code': (ctx) => {
+    const c = db.student_certificates.find((x) => x.verify_code.toUpperCase() === String(ctx.params.code).toUpperCase());
+    if (!c) throw new MockHttpError(404, 'Ийм кодтой тодорхойлолт олдсонгүй.');
+    const valid = !c.revoked_at && (!c.valid_until || c.valid_until >= new Date().toISOString().slice(0, 10));
+    return {
+      number: c.number,
+      full_name: c.snapshot.full_name,
+      student_code: c.snapshot.student_code,
+      program_name: c.snapshot.program_name,
+      class_name: c.snapshot.class_name,
+      status: c.snapshot.status,
+      issued_at: c.issued_at,
+      valid_until: c.valid_until,
+      is_valid: valid,
+      revoked: !!c.revoked_at,
+    };
   },
 
   // ----- AUDIT -----

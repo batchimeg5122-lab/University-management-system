@@ -2,22 +2,31 @@ import type { Config } from 'tailwindcss';
 
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
+  // <html class="dark"> — hooks/useTheme.ts удирдана
+  darkMode: 'class',
   theme: {
     extend: {
       fontFamily: {
         sans: ['Onest', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
       },
+      // Өнгө бүр CSS хувьсагчаас (index.css) — dark mode-д автоматаар солигдоно
       colors: {
-        paper: '#F6F7F9',
-        ink: { DEFAULT: '#172033', soft: '#3A4557' },
-        muted: '#5B6576',
-        faint: '#8A93A3',
-        line: { DEFAULT: '#E3E6EB', strong: '#CDD2DA' },
-        accent: { DEFAULT: '#1E4B8F', hover: '#183D75', soft: '#EAF0F9', ink: '#15386B' },
-        gold: { DEFAULT: '#B8862B', soft: '#FBF3E3' },
-        success: { DEFAULT: '#1F7A4D', soft: '#E7F4EC' },
-        danger: { DEFAULT: '#B42318', soft: '#FDECEA' },
-        warn: { DEFAULT: '#B54708', soft: '#FEF4E6' },
+        paper: 'rgb(var(--c-paper) / <alpha-value>)',
+        surface: 'rgb(var(--c-surface) / <alpha-value>)',
+        ink: { DEFAULT: 'rgb(var(--c-ink) / <alpha-value>)', soft: 'rgb(var(--c-ink-soft) / <alpha-value>)' },
+        muted: 'rgb(var(--c-muted) / <alpha-value>)',
+        faint: 'rgb(var(--c-faint) / <alpha-value>)',
+        line: { DEFAULT: 'rgb(var(--c-line) / <alpha-value>)', strong: 'rgb(var(--c-line-strong) / <alpha-value>)' },
+        accent: {
+          DEFAULT: 'rgb(var(--c-accent) / <alpha-value>)',
+          hover: 'rgb(var(--c-accent-hover) / <alpha-value>)',
+          soft: 'rgb(var(--c-accent-soft) / <alpha-value>)',
+          ink: 'rgb(var(--c-accent-ink) / <alpha-value>)',
+        },
+        gold: { DEFAULT: 'rgb(var(--c-gold) / <alpha-value>)', soft: 'rgb(var(--c-gold-soft) / <alpha-value>)' },
+        success: { DEFAULT: 'rgb(var(--c-success) / <alpha-value>)', soft: 'rgb(var(--c-success-soft) / <alpha-value>)' },
+        danger: { DEFAULT: 'rgb(var(--c-danger) / <alpha-value>)', soft: 'rgb(var(--c-danger-soft) / <alpha-value>)' },
+        warn: { DEFAULT: 'rgb(var(--c-warn) / <alpha-value>)', soft: 'rgb(var(--c-warn-soft) / <alpha-value>)' },
       },
       fontSize: {
         '2xs': ['0.6875rem', { lineHeight: '1rem' }],

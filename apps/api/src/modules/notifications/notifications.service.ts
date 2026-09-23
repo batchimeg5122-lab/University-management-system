@@ -3,6 +3,7 @@ import { supabase } from '../../config/supabase';
 import { forbidden } from '../../middleware/error.middleware';
 import type { AuthUser } from '../../types/express';
 import { required, run, toHttpError } from '../../utils/api-response';
+import { pushPersonal, pushToRole, pushToUsers } from '../../utils/push';
 import type { createAnnouncementSchema, listNotificationsQuery, updateNotificationSchema } from './notifications.schema';
 
 const ANNOUNCERS = ['super_admin', 'academic', 'management'];
@@ -19,11 +20,33 @@ async function insertNotifications(rows: Record<string, unknown>[], selectOne = 
 }
 
 /** Хувь хүнд мэдэгдэл илгээнэ. Алдаа гарсан ч үндсэн үйлдлийг зогсоохгүй. */
-export async function notifyUsers(userIds: string[], title: string, message: string, type: string, createdBy: string | null = null) {
+export async function notifyUsers(
+  userIds: string[],
+  title: string,
+  message: string,
+  type: string,
+  createdBy: string | null = null,
+  /** Mobile push-д нэмэлт мэдээлэл — дарахад тохирох дэлгэц рүү шилжинэ (жишээ нь { course_id }) */
+  data: Record<string, unknown> = {},
+) {
   const unique = [...new Set(userIds.filter(Boolean))];
   if (!unique.length) return;
   const { error } = await insertNotifications(unique.map((user_id) => ({ user_id, title, message, type, is_published: true, created_by: createdBy })));
   if (error) console.warn('[notify]', error.message);
+  // Mobile push — хүлээхгүй
+  void pushToUsers(unique, title, message, { ...data, type });
+}
+
+/** Хичээлд бүртгэлтэй (хасагдаагүй) бүх оюутанд мэдэгдэл илгээнэ */
+export async function notifyCourseStudents(courseIds: string[], title: string, message: string, type: string, createdBy: string | null = null, data: Record<string, unknown> = {}) {
+  try {
+    const ids = [...new Set(courseIds.filter(Boolean))];
+    if (!ids.length) return;
+    const rows = await run(supabase.from('enrollments').select('students(user_id)').in('course_id', ids).neq('status', 'dropped'));
+    await notifyUsers(rows.map((r: any) => r.students?.user_id).filter(Boolean), title, message, type, createdBy, { course_id: ids.length === 1 ? ids[0] : undefined, ...data });
+  } catch (err) {
+    console.warn('[notify]', (err as Error).message);
+  }
 }
 
 export async function list(q: z.infer<typeof listNotificationsQuery>, actor: AuthUser) {
@@ -53,6 +76,9 @@ export async function list(q: z.infer<typeof listNotificationsQuery>, actor: Aut
 export async function create(input: z.infer<typeof createAnnouncementSchema>, actor: AuthUser) {
   const { data, error } = await insertNotifications([{ ...input, user_id: null, type: 'announcement', created_by: actor.id }], true);
   if (error) throw toHttpError(error);
+  // Шууд нийтлэгдсэн зарлалыг mobile-д push хийнэ (хойшлуулсан зарлалд push илгээхгүй)
+  const scheduled = input.publish_at && new Date(input.publish_at).getTime() > Date.now();
+  if (input.is_published !== false && !scheduled) void pushToRole(input.target_role ?? null, input.title, input.message.slice(0, 180), { type: 'announcement', id: (data as any)?.id });
   return data as any;
 }
 
@@ -76,4 +102,18 @@ export async function readAll(actor: AuthUser) {
 export async function remove(id: string) {
   required(await run(supabase.from('notifications').delete().eq('id', id).is('user_id', null).select('id')), 'Зарлал олдсонгүй.');
   return { deleted: true };
+}
+
+/**
+ * Хэрэглэгч бүрт өөр агуулгатай мэдэгдэл (бөөнөөр) + push.
+ * Нэхэмжлэл, өр төлбөрийн сануулгад ашиглана.
+ */
+export async function notifyMany(items: { userId: string; title: string; message: string }[], type: string, createdBy: string | null = null, data: Record<string, unknown> = {}) {
+  const valid = items.filter((i) => i.userId);
+  for (let i = 0; i < valid.length; i += 500) {
+    const part = valid.slice(i, i + 500);
+    const { error } = await insertNotifications(part.map((p) => ({ user_id: p.userId, title: p.title, message: p.message, type, is_published: true, created_by: createdBy })));
+    if (error) console.warn('[notify-many]', error.message);
+  }
+  void pushPersonal(valid.map((v) => ({ userId: v.userId, title: v.title, body: v.message, data: { ...data, type } })));
 }

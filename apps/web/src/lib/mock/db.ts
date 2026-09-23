@@ -6,7 +6,7 @@
 import type {
   AppUser, Attendance, AttendanceStatus, AuditLog, ClassGroup, Course, Department, Employee,
   EmployeeType, Enrollment, GradeItem, Invoice, Notification, Payment, PaymentMethod, Program,
-  ScheduleRecord, Semester, Student, Subject, UserRole,
+  ScheduleRecord, Semester, Student, Subject, UserRole, CourseMaterial,
 } from '@/types/models';
 import { scoreToGrade } from '../gpa';
 import { toISODate } from '../utils';
@@ -47,6 +47,10 @@ export const db = {
   payments: [] as Payment[],
   notifications: [] as Notification[],
   audit_logs: [] as AuditLog[],
+  course_materials: [] as CourseMaterial[],
+  student_certificates: [] as any[],
+  rooms: [] as { id: string; building: string; code: string; capacity: number; room_type: string; note: string | null; is_active: boolean }[],
+  material_access: [] as { id: string; material_id: string; student_id: string; download_count: number; first_at: string; last_at: string }[],
 };
 
 let counter = 0;
@@ -620,3 +624,66 @@ AUDIT.forEach(([user_id, action, table_name, created_at], i) =>
     created_at,
   }),
 );
+
+// ---------------------------------------------------------------------------
+// 14. Хичээлийн материал (жишээ өгөгдөл)
+// ---------------------------------------------------------------------------
+const MATERIAL_SEEDS: [string, string, string, string, string, number][] = [
+  ['Лекц 1: Веб хөгжүүлэлтийн танилцуулга', 'Хичээлийн агуулга, үнэлгээний журам.', 'lecture-01-intro.pdf', 'application/pdf', 'CS301', 1_842_000],
+  ['Лекц 2: HTML, CSS сэргээлт', 'Дасгалын файл хавсаргав.', 'lecture-02-html-css.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'CS301', 4_210_000],
+  ['Бие даалтын удирдамж', '10 дугаар сарын 20-ны дотор илгээнэ.', 'biedaalt-udirdamj.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'CS301', 96_000],
+  ['Лаборатори 3: SQL асуулга', null as unknown as string, 'lab-03-sql.pdf', 'application/pdf', 'CS201', 720_000],
+];
+
+MATERIAL_SEEDS.forEach(([title, description, file_name, mime_type, subjectCode, size], i) => {
+  const course = db.courses.find((c) => c.semester_id === CURRENT_SEMESTER_ID && c.subject_id === subjectId[subjectCode]);
+  if (!course) return;
+  const teacher = db.employees.find((e) => e.id === course.teacher_id);
+  db.course_materials.push({
+    id: `mat-${pad(i + 1)}`,
+    course_id: course.id,
+    uploaded_by: teacher?.user_id ?? null,
+    title,
+    description: description ?? null,
+    file_path: `${course.id}/seed-${i + 1}-${file_name}`,
+    file_name,
+    mime_type,
+    size_bytes: size,
+    is_published: true,
+    created_at: `2026-09-${pad(2 + i * 3, 2)}T09:00:00Z`,
+  });
+});
+
+// Материалын хандалт (жишээ): оюутнуудын 40-80% нь татсан байхаар
+db.course_materials.forEach((m, mi) => {
+  const students = db.enrollments.filter((e) => e.course_id === m.course_id).map((e) => e.student_id);
+  const share = 0.4 + rand() * 0.4;
+  students.forEach((student_id, si) => {
+    if ((si * 7 + mi * 3) % 10 >= share * 10) return;
+    const count = rand() < 0.25 ? 2 : 1;
+    db.material_access.push({
+      id: `mac-${mi}-${si}`,
+      material_id: m.id,
+      student_id,
+      download_count: count,
+      first_at: `2026-09-${pad(6 + (si % 8), 2)}T10:${pad((si * 7) % 60, 2)}:00Z`,
+      last_at: `2026-09-${pad(10 + (si % 5), 2)}T14:${pad((si * 11) % 60, 2)}:00Z`,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 15. Өрөөнүүд (хуваариас автоматаар + нэмэлт том танхимууд)
+// ---------------------------------------------------------------------------
+const seenRooms = new Set<string>();
+db.schedules.forEach((s) => {
+  const key = `${s.building ?? ''}|${s.room ?? ''}`;
+  if (!s.room || seenRooms.has(key)) return;
+  seenRooms.add(key);
+  db.rooms.push({ id: `room-${db.rooms.length + 1}`, building: s.building ?? 'I байр', code: s.room, capacity: 40, room_type: 'lecture', note: null, is_active: true });
+});
+// Нэгдсэн лекцэд тохирох том танхимууд
+[['I байр', '101', 120], ['I байр', '102', 90], ['II байр', '201', 150], ['III байр', '301', 60]].forEach(([building, code, capacity], i) => {
+  if (seenRooms.has(`${building}|${code}`)) return;
+  db.rooms.push({ id: `room-big-${i + 1}`, building: building as string, code: code as string, capacity: capacity as number, room_type: 'lecture', note: 'Том лекцийн танхим', is_active: true });
+});

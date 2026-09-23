@@ -24,6 +24,18 @@ if (env.dataSource === 'mock') {
   });
 }
 
+// Байгууллагын тохиргоонд 2FA заавал боловч хэрэглэгч тохируулаагүй → AppLayout анхааруулга харуулна
+api.interceptors.response.use(undefined, (error: AxiosError) => {
+  const code = (error.response?.data as { error?: { code?: string } } | undefined)?.error?.code;
+  if (error.response?.status === 403 && code === 'MFA_REQUIRED') window.dispatchEvent(new CustomEvent('mfa-required'));
+  // Өөр төхөөрөмжөөс нэвтэрсэн — энэ session хаагдсан
+  if (error.response?.status === 401 && code === 'SESSION_REPLACED') {
+    const message = (error.response?.data as { error?: { message?: string } } | undefined)?.error?.message;
+    window.dispatchEvent(new CustomEvent('session-replaced', { detail: message }));
+  }
+  return Promise.reject(error);
+});
+
 /** `{ data }` хэлбэрийн хариуг задлана */
 export async function get<T>(url: string, params?: Record<string, unknown>) {
   const res = await api.get<{ data: T }>(url, { params });

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Plus, UserSquare2 } from 'lucide-react';
-import { Button, DataTable, Input, Modal, PageHeader, Panel, SearchInput, Select } from '@/components/ui';
+import { Button, DataTable, ExportButton, Input, Modal, PageHeader, Panel, SearchInput, Select } from '@/components/ui';
+import { exportExcel } from '@/lib/excel';
 import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 import { useDepartments } from '@/features/departments/hooks';
@@ -60,7 +61,28 @@ export default function TeachersPage() {
       <PageHeader
         title="Багш, ажилтан"
         description="Багш нарын бүртгэл, харьяалах тэнхим, мэргэшил."
-        actions={can('teachers') && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing('new')}>Ажилтан бүртгэх</Button>}
+        actions={
+          <>
+            <ExportButton
+              disabled={!data?.length}
+              onExport={() =>
+                exportExcel('bagsh-ajiltan', 'Багш, ажилтан', [
+                  { header: 'Ажилтны код', value: (r) => r.employee_code },
+                  { header: 'Овог', value: (r) => r.last_name, width: 18 },
+                  { header: 'Нэр', value: (r) => r.first_name, width: 18 },
+                  { header: 'Тэнхим', value: (r) => r.department_name, width: 30 },
+                  { header: 'Албан тушаал', value: (r) => r.position, width: 24 },
+                  { header: 'Мэргэшил', value: (r) => r.specialization, width: 24 },
+                  { header: 'Зэрэг', value: (r) => r.academic_degree },
+                  { header: 'И-мэйл', value: (r) => r.email, width: 32 },
+                  { header: 'Утас', value: (r) => r.phone },
+                  { header: 'Идэвхтэй', value: (r) => (r.is_active ? 'Тийм' : 'Үгүй') },
+                ], data ?? [])
+              }
+            />
+            {can('teachers') && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing('new')}>Ажилтан бүртгэх</Button>}
+          </>
+        }
       />
       <Panel flush>
         <div className="flex flex-col gap-2 border-b border-line px-4 py-3 sm:flex-row sm:items-center">

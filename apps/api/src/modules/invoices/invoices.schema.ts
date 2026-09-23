@@ -28,3 +28,39 @@ export const updateInvoiceSchema = z.object({
   description: optionalText,
   status: z.enum(['pending', 'cancelled']).optional(), // бусад төлөвийг төлөлтөөр автоматаар тооцно
 });
+
+// ---------------------------------------------------------------------
+// Бөөнөөр нэхэмжлэх, өр төлбөрийн сануулга
+// ---------------------------------------------------------------------
+
+export const bulkInvoiceSchema = z
+  .object({
+    semester_id: z.string().uuid().optional().nullable().or(z.literal('').transform(() => null)),
+    scope: z.object({
+      kind: z.enum(['all', 'school', 'program', 'class', 'students']),
+      ids: z.array(z.string().uuid()).max(300).default([]),
+      student_codes: z.array(z.string().trim().toUpperCase()).max(3000).default([]),
+    }),
+    /** fixed — нэг дүн, per_credit — кредит × үнэ */
+    mode: z.enum(['fixed', 'per_credit']).default('fixed'),
+    amount: z.coerce.number().positive('Дүн оруулна уу'),
+    due_date: optionalText,
+    description: optionalText,
+    apply_rules: z.boolean().default(true),
+    /** Тухайн улиралд нэхэмжлэлтэй оюутныг алгасах */
+    skip_existing: z.boolean().default(true),
+  })
+  .refine((v) => v.scope.kind === 'all' || (v.scope.kind === 'students' ? v.scope.student_codes.length > 0 : v.scope.ids.length > 0), {
+    message: 'Хамрах хүрээгээ сонгоно уу',
+    path: ['scope'],
+  });
+
+export const debtorsQuery = z.object({
+  overdue_only: z.enum(['true', 'false']).optional(),
+  semester_id: z.string().uuid().optional().or(z.literal('')),
+});
+
+export const remindSchema = z.object({
+  invoice_ids: z.array(z.string().uuid()).min(1, 'Нэхэмжлэл сонгоно уу').max(2000),
+  message: z.string().trim().max(500).optional().nullable(),
+});

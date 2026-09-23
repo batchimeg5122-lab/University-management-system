@@ -1,6 +1,9 @@
 import { app } from './app';
 import { env } from './config/env';
 import { supabase } from './config/supabase';
+import { processScheduled } from './modules/broadcasts/broadcasts.service';
+import { runFinanceJobs } from './modules/invoices/invoices.reminders';
+import { weeklyJob } from './modules/analytics/weekly.service';
 
 /** JWT key-ийн payload-ийг задлах (anon / service_role ялгах) */
 function jwtRole(key: string): string | null {
@@ -88,7 +91,23 @@ async function start() {
     console.log(`API ажиллаж байна: http://localhost:${env.PORT}/api  (${env.NODE_ENV})`);
   });
 
-  const shutdown = () => server.close(() => process.exit(0));
+  // Товлосон мэдэгдлийн push — минут тутамд
+  const timer = setInterval(() => void processScheduled().catch((e) => console.warn('[scheduler]', e.message)), 60_000);
+
+  // Санхүү: хугацаа хэтрэлт, автомат сануулга — цагт нэг (эхлээд 1 минутын дараа)
+  const runFinance = () => {
+    void runFinanceJobs().catch((e) => console.warn('[finance-job]', e.message));
+    void weeklyJob().catch((e) => console.warn('[weekly-report]', e.message));
+  };
+  const financeStart = setTimeout(runFinance, 60_000);
+  const financeTimer = setInterval(runFinance, 60 * 60_000);
+
+  const shutdown = () => {
+    clearTimeout(financeStart);
+    clearInterval(financeTimer);
+    clearInterval(timer);
+    server.close(() => process.exit(0));
+  };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }

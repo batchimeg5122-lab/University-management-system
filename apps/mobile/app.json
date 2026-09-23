@@ -1,0 +1,63 @@
+{
+  "expo": {
+    "name": "Их Засаг",
+    "slug": "ikhzasag-mobile",
+    "version": "1.0.0",
+    "scheme": "ikhzasag",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "mn.edu.ikhzasag.mobile",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Профайл зураг сонгоход зургийн санд хандана.",
+        "NSCameraUsageDescription": "Профайл зураг авахад камер ашиглана.",
+        "NSFaceIDUsageDescription": "Их Засаг апп-ыг Face ID-аар түгжиж, тайлахад ашиглана."
+      }
+    },
+    "android": {
+      "package": "mn.edu.ikhzasag.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "color": "#1E4B8F"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Профайл зураг сонгоход зургийн санд хандана."
+        }
+      ],
+      "expo-document-picker",
+      "expo-asset",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Их Засаг апп-ыг Face ID-аар түгжиж, тайлахад ашиглана."
+        }
+      ]
+    ],
+    "extra": {}
+  }
+}

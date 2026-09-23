@@ -1,9 +1,9 @@
 import { useMemo, type ReactNode } from 'react';
-import { MapPin, Plus } from 'lucide-react';
+import { MapPin, Plus, Video } from 'lucide-react';
 import { DAY_LABEL } from '@/lib/constants';
 import { cn, shortName } from '@/lib/utils';
 import type { Schedule } from '@/types/models';
-import { TIME_SLOTS, WEEK_DAYS, hhmm, toMin } from '../lib/timetable';
+import { SESSION_TYPE_LABEL, TIME_SLOTS, WEEK_DAYS, hhmm, toMin, type SessionType } from '../lib/timetable';
 import { todayDow } from './WeekSchedule';
 
 export type TimetableView = 'all' | 'class' | 'teacher' | 'room';
@@ -17,17 +17,44 @@ function slotIndexFor(start: string) {
   return inside >= 0 ? inside : m < toMin(TIME_SLOTS[0].start) ? 0 : TIME_SLOTS.length - 1;
 }
 
-function Entry({ s, view, conflicted, onClick }: { s: Schedule; view: TimetableView; conflicted: boolean; onClick?: () => void }) {
+function Entry({ s, view, conflicted, groupClasses, onClick }: {
+  s: Schedule;
+  view: TimetableView;
+  conflicted: boolean;
+  /** Нэгдсэн лекцийн бусад ангиуд */
+  groupClasses?: string[];
+  onClick?: () => void;
+}) {
   const offSlot = TIME_SLOTS.every((t) => t.start !== hhmm(s.start_time));
+  const type = (s.session_type ?? 'lecture') as SessionType;
+  const merged = (groupClasses?.length ?? 0) > 1;
   const lines: ReactNode[] = [];
-  if (view !== 'class') lines.push(<span key="c" className="font-semibold text-ink">{s.class_name}</span>);
+  if (view !== 'class') {
+    lines.push(
+      <span key="c" className="font-semibold text-ink">
+        {merged ? groupClasses!.join(' + ') : s.class_name}
+      </span>,
+    );
+  }
   if (view !== 'teacher') lines.push(<span key="t">{shortName(s.teacher_name)}</span>);
 
   const body = (
     <>
       <span className="line-clamp-2 text-[12.5px] font-medium leading-snug text-ink">{s.subject_name}</span>
+      <span className="mt-0.5 flex flex-wrap items-center gap-1">
+        {type !== 'lecture' && (
+          <span className="rounded-[4px] bg-ink/[0.06] px-1.5 py-px text-[10.5px] font-medium text-ink-soft">{SESSION_TYPE_LABEL[type]}</span>
+        )}
+        {merged && <span className="rounded-[4px] bg-accent-soft px-1.5 py-px text-[10.5px] font-medium text-accent-ink">Нэгдсэн</span>}
+        {s.is_online && (
+          <span className="flex items-center gap-0.5 rounded-[4px] bg-gold-soft px-1.5 py-px text-[10.5px] font-medium text-gold">
+            <Video className="h-2.5 w-2.5" />
+            Онлайн
+          </span>
+        )}
+      </span>
       <span className="mt-1 flex flex-wrap gap-x-2 text-[11.5px] text-muted">{lines}</span>
-      {view !== 'room' && s.room && (
+      {view !== 'room' && s.room && !s.is_online && (
         <span className="mt-0.5 flex items-center gap-1 text-[11.5px] text-faint">
           <MapPin className="h-3 w-3 shrink-0" />
           {s.building ? `${s.building}, ` : ''}
@@ -75,15 +102,32 @@ export function TimetableGrid({
 }) {
   const today = todayDow();
 
+  /** Нэгдсэн лекцийн ангиудыг бүлгээр нь цуглуулна */
+  const groupClasses = useMemo(() => {
+    const map = new Map<string, string[]>();
+    rows.forEach((s) => {
+      if (!s.group_id) return;
+      map.set(s.group_id, [...(map.get(s.group_id) ?? []), s.class_name ?? '']);
+    });
+    map.forEach((list) => list.sort());
+    return map;
+  }, [rows]);
+
   const cells = useMemo(() => {
     const map = new Map<string, Schedule[]>();
+    const seenGroups = new Set<string>();
     rows.forEach((s) => {
+      // Нэгдсэн лекцийг нэг удаа л харуулна (ангийн харагдацад бүгдийг)
+      if (s.group_id && view !== 'class') {
+        if (seenGroups.has(s.group_id)) return;
+        seenGroups.add(s.group_id);
+      }
       const key = `${s.day_of_week}:${slotIndexFor(s.start_time)}`;
       map.set(key, [...(map.get(key) ?? []), s]);
     });
     map.forEach((list) => list.sort((a, b) => (a.class_name ?? '').localeCompare(b.class_name ?? '')));
     return map;
-  }, [rows]);
+  }, [rows, view]);
 
   return (
     <div className="overflow-x-auto">
@@ -124,7 +168,14 @@ export function TimetableGrid({
                   <td key={d} className={cn('group border-b border-l border-line p-1 align-top', d === today && 'bg-accent-soft/25')}>
                     <div className="flex min-h-[64px] flex-col gap-1">
                       {list.map((s) => (
-                        <Entry key={s.id} s={s} view={view} conflicted={!!conflictIds?.has(s.id)} onClick={onEntryClick ? () => onEntryClick(s) : undefined} />
+                        <Entry
+                          key={s.id}
+                          s={s}
+                          view={view}
+                          conflicted={!!conflictIds?.has(s.id)}
+                          groupClasses={s.group_id ? groupClasses.get(s.group_id) : undefined}
+                          onClick={onEntryClick ? () => onEntryClick(s) : undefined}
+                        />
                       ))}
                       {onEmptyClick && (view !== 'all' ? list.length === 0 : true) && (
                         <button

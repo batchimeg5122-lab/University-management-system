@@ -9,7 +9,7 @@ import type {
   AttendanceStatus, Course, Enrollment, EmployeeView, GradeItem, Invoice, Payment, Schedule, Session, StudentView,
 } from '@/types/models';
 import { computeTotal, letterBucket, scoreToGrade, weightedGpa } from './gpa';
-import { conflictMessage, findAllConflicts, findConflicts } from '@/features/schedules/lib/timetable';
+import { TIME_SLOTS, WEEK_DAYS, conflictMessage, findAllConflicts, findConflicts, overlaps } from '@/features/schedules/lib/timetable';
 import { supabase } from './supabase';
 
 class HttpError extends Error {
@@ -178,9 +178,12 @@ const mapEnrollment = (r: any): Enrollment => ({
   semester_name: semLabel(r.courses?.semesters),
 });
 
-const SCHEDULE_SELECT = '*, courses!inner(semester_id, class_id, teacher_id, subjects(code,name), classes(code), employees(users(full_name)))';
+const SCHEDULE_SELECT = '*, courses!inner(semester_id, class_id, teacher_id, subjects(code,name), classes(code), employees(users(full_name)), enrollments(count))';
 const mapSchedule = ({ courses, ...r }: any): Schedule => ({
   ...r,
+  session_type: r.session_type ?? 'lecture',
+  is_online: !!r.is_online,
+  student_count: courses?.enrollments?.[0]?.count ?? 0,
   semester_id: courses?.semester_id,
   class_id: courses?.class_id ?? null,
   teacher_id: courses?.teacher_id ?? null,
@@ -190,17 +193,19 @@ const mapSchedule = ({ courses, ...r }: any): Schedule => ({
   class_name: courses?.classes?.code ?? null,
 });
 
+async function capacityWarnings(rows: any[]): Promise<string[]> {
+  const first = rows[0];
+  if (!first || first.is_online || !first.room) return [];
+  const room = (await run(sb().from('rooms').select('capacity').eq('building', first.building ?? '').eq('code', first.room).maybeSingle())) as { capacity: number } | null;
+  if (!room) return [`${first.building ?? ''} ${first.room} өрөө бүртгэлд алга.`];
+  const seats = rows.reduce((sum: number, r: any) => sum + (r.student_count ?? 0), 0);
+  return seats > room.capacity ? [`Оюутны тоо (${seats}) өрөөний багтаамжаас (${room.capacity}) хэтэрсэн байна.`] : [];
+}
+
 async function semesterSchedules(semesterId: string, day?: number) {
   let q = sb().from('schedules').select(SCHEDULE_SELECT).eq('courses.semester_id', semesterId);
   if (day) q = q.eq('day_of_week', day);
   return ((await run(q)) as any[]).map(mapSchedule);
-}
-
-async function assertScheduleFree(candidate: Omit<Schedule, 'class_id' | 'teacher_id'> | (Partial<Schedule> & { course_id: string; day_of_week: number; start_time: string; end_time: string })) {
-  const course = await run(sb().from('courses').select('semester_id, class_id, teacher_id').eq('id', candidate.course_id).single()) as { semester_id: string; class_id: string | null; teacher_id: string | null };
-  const entry = { id: candidate.id, course_id: candidate.course_id, day_of_week: candidate.day_of_week, start_time: candidate.start_time, end_time: candidate.end_time, room: candidate.room ?? null, building: candidate.building ?? null, class_id: course.class_id, teacher_id: course.teacher_id };
-  const [first] = findConflicts(entry, await semesterSchedules(course.semester_id, candidate.day_of_week));
-  if (first) throw new HttpError(409, conflictMessage(first.kind, first.with));
 }
 
 const INVOICE_SELECT = '*, students(student_code, users(full_name)), semesters(academic_year,name)';
@@ -217,6 +222,53 @@ const mapPayment = (r: any): Payment => ({
   invoice_number: r.invoices?.invoice_number,
   student_code: r.students?.student_code,
   student_name: r.students?.users?.full_name,
+});
+
+const MATERIAL_BUCKET = 'course-materials';
+const PREVIEWABLE = ['application/pdf', 'text/plain', 'text/csv', 'image/png', 'image/jpeg', 'image/webp', 'video/mp4'];
+
+/** Материалын түр холбоос + оюутны хандалтын бүртгэл */
+async function materialLink(id: string, mode: 'download' | 'inline') {
+  const m = (await run(sb().from('course_materials').select('file_path, file_name, mime_type').eq('id', id).single())) as {
+    file_path: string;
+    file_name: string;
+    mime_type: string | null;
+  };
+
+  const session = await me();
+  if (session.user.role === 'student' && session.student) {
+    const existing = (await run(
+      sb().from('course_material_access').select('id, download_count').eq('material_id', id).eq('student_id', session.student.id).maybeSingle(),
+    )) as { id: string; download_count: number } | null;
+    const stamp = new Date().toISOString();
+    if (existing) await sb().from('course_material_access').update({ download_count: Number(existing.download_count) + 1, last_at: stamp }).eq('id', existing.id);
+    else await sb().from('course_material_access').insert({ material_id: id, student_id: session.student.id, download_count: 1, first_at: stamp, last_at: stamp });
+  }
+
+  const { data, error } = await sb()
+    .storage.from(MATERIAL_BUCKET)
+    .createSignedUrl(m.file_path, 300, mode === 'download' ? { download: m.file_name } : {});
+  if (error || !data) throw new HttpError(403, `Холбоос үүсгэж чадсангүй: ${error?.message}`);
+
+  return { url: data.signedUrl, file_name: m.file_name, mime_type: m.mime_type, can_preview: PREVIEWABLE.includes(m.mime_type ?? ''), expires_in: 300 };
+}
+
+
+const MATERIAL_SELECT = '*, users(full_name), courses(subjects(code, name), classes(code))';
+const mapMaterial = ({ users, courses, ...m }: any) => ({
+  ...m,
+  size_bytes: Number(m.size_bytes ?? 0),
+  uploaded_by_name: users?.full_name ?? null,
+  subject_code: courses?.subjects?.code,
+  subject_name: courses?.subjects?.name,
+  class_name: courses?.classes?.code ?? null,
+});
+
+const mapCertificate = (c: any) => ({
+  ...c,
+  student_code: c.snapshot?.student_code,
+  student_name: c.snapshot?.full_name,
+  is_valid: !c.revoked_at && (!c.valid_until || c.valid_until >= new Date().toISOString().slice(0, 10)),
 });
 
 async function currentSemesterId(): Promise<string | undefined> {
@@ -494,9 +546,33 @@ export const routes: Record<string, Handler> = {
   },
   'GET /grades/me': async () => {
     const s = await me();
-    return (await run(sb().from('enrollments').select(ENROLLMENT_SELECT).eq('student_id', s.student?.id ?? '')) as any[])
-      .map(mapEnrollment)
-      .map((e) => (e.grade_status === 'approved' ? e : { ...e, total_score: null, letter_grade: null, gpa_point: null }));
+    const rows = ((await run(sb().from('enrollments').select(ENROLLMENT_SELECT).eq('student_id', s.student?.id ?? ''))) as any[]).map(mapEnrollment);
+    const courseIds = [...new Set(rows.map((e) => e.course_id))];
+    const items = courseIds.length ? ((await run(sb().from('grade_items').select('*').in('course_id', courseIds).order('sort_order'))) as any[]) : [];
+    return rows.map((e) => {
+      const own = items.filter((i) => i.course_id === e.course_id);
+      const scores = (e.scores ?? {}) as Record<string, number>;
+      const graded = own.filter((i) => typeof scores[i.id] === 'number');
+      const earned = graded.reduce((sum, i) => sum + Number(scores[i.id]), 0);
+      const gradedMax = graded.reduce((sum, i) => sum + Number(i.max_score), 0);
+      const totalMax = own.reduce((sum, i) => sum + Number(i.max_score), 0);
+      const approved = e.grade_status === 'approved';
+      return {
+        ...e,
+        total_score: approved ? e.total_score : null,
+        letter_grade: approved ? e.letter_grade : null,
+        gpa_point: approved ? e.gpa_point : null,
+        progress: {
+          items: own.map((i) => ({ id: i.id, name: i.name, max_score: Number(i.max_score), score: typeof scores[i.id] === 'number' ? Number(scores[i.id]) : null })),
+          earned: Math.round(earned * 100) / 100,
+          graded_max: gradedMax,
+          total_max: totalMax,
+          percent: gradedMax ? Math.round((earned / gradedMax) * 1000) / 10 : null,
+          collected_percent: totalMax ? Math.round((earned / totalMax) * 1000) / 10 : null,
+          remaining_max: Math.max(0, totalMax - gradedMax),
+        },
+      };
+    });
   },
 
   // ----- ATTENDANCE -----
@@ -551,31 +627,231 @@ export const routes: Record<string, Handler> = {
     return findAllConflicts(await semesterSchedules(semester)).map((p) => ({ kind: p.kind, a: p.a, b: p.b }));
   },
   'POST /schedules': async ({ body }) => {
-    const row = {
-      course_id: body.course_id, day_of_week: Number(body.day_of_week), room: body.room || null, building: body.building || null,
-      start_time: `${String(body.start_time).slice(0, 5)}:00`, end_time: `${String(body.end_time).slice(0, 5)}:00`,
+    const courseIds: string[] = [...new Set(body.course_ids as string[])];
+    const courses = (await run(sb().from('courses').select('id, semester_id, class_id, teacher_id').in('id', courseIds))) as any[];
+    if (courses.length !== courseIds.length) throw new HttpError(404, 'Зарим хичээл олдсонгүй.');
+    if (new Set(courses.map((c) => c.semester_id)).size > 1) throw new HttpError(422, 'Нэгдсэн лекцийн хичээлүүд нэг улиралд байх ёстой.');
+    const teachers = new Set(courses.map((c) => c.teacher_id).filter(Boolean));
+    if (courseIds.length > 1 && teachers.size > 1) throw new HttpError(422, 'Нэгдсэн лекцийг нэг багш заана.');
+
+    const isOnline = !!body.is_online;
+    if (!isOnline && !body.room) throw new HttpError(422, 'Танхимын хичээлд өрөө сонгоно уу.');
+    const groupId = courseIds.length > 1 ? crypto.randomUUID() : null;
+    const shared = {
+      day_of_week: Number(body.day_of_week),
+      start_time: `${String(body.start_time).slice(0, 5)}:00`,
+      end_time: `${String(body.end_time).slice(0, 5)}:00`,
+      room: isOnline ? null : String(body.room).trim(),
+      building: isOnline ? null : body.building || null,
+      session_type: body.session_type ?? 'lecture',
+      is_online: isOnline,
+      note: body.note || null,
+      group_id: groupId,
     };
-    if (row.end_time <= row.start_time) throw new HttpError(422, 'Дуусах цаг эхлэх цагаас хойш байх ёстой.');
-    await assertScheduleFree(row);
-    return mapSchedule(await run(sb().from('schedules').insert(row).select(SCHEDULE_SELECT).single()));
+    if (shared.end_time <= shared.start_time) throw new HttpError(422, 'Дуусах цаг эхлэх цагаас хойш байх ёстой.');
+
+    const existing = await semesterSchedules(courses[0].semester_id, shared.day_of_week);
+    courses.forEach((c) => {
+      const [first] = findConflicts({ ...shared, course_id: c.id, class_id: c.class_id, teacher_id: c.teacher_id }, existing);
+      if (first) throw new HttpError(409, conflictMessage(first.kind, first.with));
+    });
+
+    const rows = ((await run(sb().from('schedules').insert(courses.map((c) => ({ ...shared, course_id: c.id }))).select(SCHEDULE_SELECT))) as any[]).map(mapSchedule);
+    return { schedules: rows, warnings: await capacityWarnings(rows) };
   },
   'PATCH /schedules/:id': async ({ params, body }) => {
-    const current = await run(sb().from('schedules').select('*').eq('id', params.id).single()) as any;
-    const next = {
-      course_id: body.course_id ?? current.course_id,
+    const current = (await run(sb().from('schedules').select('*').eq('id', params.id).single())) as any;
+    const group = current.group_id ? ((await run(sb().from('schedules').select('*').eq('group_id', current.group_id))) as any[]) : [current];
+
+    const patch: any = {
       day_of_week: body.day_of_week !== undefined ? Number(body.day_of_week) : current.day_of_week,
       start_time: body.start_time ? `${String(body.start_time).slice(0, 5)}:00` : current.start_time,
       end_time: body.end_time ? `${String(body.end_time).slice(0, 5)}:00` : current.end_time,
-      room: body.room !== undefined ? body.room || null : current.room,
+      session_type: body.session_type ?? current.session_type ?? 'lecture',
+      is_online: body.is_online !== undefined ? !!body.is_online : !!current.is_online,
+      note: body.note !== undefined ? body.note || null : current.note ?? null,
+      room: body.room !== undefined ? (body.room ? String(body.room).trim() : null) : current.room,
       building: body.building !== undefined ? body.building || null : current.building,
     };
-    if (next.end_time <= next.start_time) throw new HttpError(422, 'Дуусах цаг эхлэх цагаас хойш байх ёстой.');
-    await assertScheduleFree({ id: params.id, ...next });
-    assertChanged(await run(sb().from('schedules').update(next).eq('id', params.id).select('id')), 'Хуваарь');
-    return mapSchedule(await run(sb().from('schedules').select(SCHEDULE_SELECT).eq('id', params.id).single()));
+    if (patch.is_online) {
+      patch.room = null;
+      patch.building = null;
+    } else if (!patch.room) throw new HttpError(422, 'Танхимын хичээлд өрөө сонгоно уу.');
+    if (patch.end_time <= patch.start_time) throw new HttpError(422, 'Дуусах цаг эхлэх цагаас хойш байх ёстой.');
+
+    const course = (await run(sb().from('courses').select('semester_id').eq('id', current.course_id).single())) as { semester_id: string };
+    const ids = new Set(group.map((g) => g.id));
+    const existing = (await semesterSchedules(course.semester_id, patch.day_of_week)).filter((e: any) => !ids.has(e.id));
+    for (const row of group) {
+      const c = (await run(sb().from('courses').select('class_id, teacher_id').eq('id', row.course_id).single())) as any;
+      const [first] = findConflicts({ ...patch, id: row.id, course_id: row.course_id, class_id: c.class_id, teacher_id: c.teacher_id, group_id: row.group_id }, existing);
+      if (first) throw new HttpError(409, conflictMessage(first.kind, first.with));
+    }
+
+    assertChanged(await run(sb().from('schedules').update(patch).in('id', [...ids]).select('id')), 'Хуваарь');
+    const rows = ((await run(sb().from('schedules').select(SCHEDULE_SELECT).in('id', [...ids]))) as any[]).map(mapSchedule);
+    return { schedules: rows, warnings: await capacityWarnings(rows) };
   },
-  'DELETE /schedules/:id': async ({ params }) => {
+  'DELETE /schedules/:id': async ({ params, query }) => {
+    const current = (await run(sb().from('schedules').select('id, group_id').eq('id', params.id).single())) as any;
+    if (query.group === 'true' && current.group_id) {
+      const rows = assertChanged(await run(sb().from('schedules').delete().eq('group_id', current.group_id).select('id')), 'Хуваарь');
+      return { deleted: true, count: rows.length };
+    }
     assertChanged(await run(sb().from('schedules').delete().eq('id', params.id).select('id')), 'Хуваарь');
+    return { deleted: true, count: 1 };
+  },
+  'GET /schedules/suggestions': async ({ query }) => {
+    const courseIds = String(query.course_ids ?? '').split(',').filter(Boolean);
+    const courses = (await run(sb().from('courses').select('id, semester_id, class_id, teacher_id').in('id', courseIds))) as any[];
+    if (!courses.length) throw new HttpError(404, 'Хичээл олдсонгүй.');
+    const existing = await semesterSchedules(courses[0].semester_id);
+    const rooms = (await run(sb().from('rooms').select('building, code, capacity').eq('is_active', true))) as any[];
+    const enr = (await run(sb().from('enrollments').select('course_id').in('course_id', courseIds).neq('status', 'dropped'))) as any[];
+    const seats = enr.length;
+
+    const slots: any[] = [];
+    WEEK_DAYS.forEach((day) => {
+      TIME_SLOTS.forEach((slot) => {
+        const blocked = courses.some(
+          (c) =>
+            findConflicts(
+              { course_id: c.id, class_id: c.class_id, teacher_id: c.teacher_id, day_of_week: day, start_time: slot.start, end_time: slot.end, room: null, building: null, is_online: true },
+              existing,
+            ).length > 0,
+        );
+        if (blocked) return;
+        const busy = new Set(
+          existing
+            .filter((e: any) => !e.is_online && e.room && overlaps(e, { day_of_week: day, start_time: slot.start, end_time: slot.end }))
+            .map((e: any) => `${e.building ?? ''}|${(e.room ?? '').toLowerCase()}`),
+        );
+        const free = rooms
+          .filter((r) => r.capacity >= seats && !busy.has(`${r.building}|${String(r.code).toLowerCase()}`))
+          .sort((a, b) => a.capacity - b.capacity)
+          .slice(0, 5)
+          .map((r) => ({ building: r.building, code: r.code, capacity: r.capacity }));
+        slots.push({ day_of_week: day, start_time: slot.start, end_time: slot.end, rooms: free });
+      });
+    });
+    return { total_students: seats, slots: slots.slice(0, 20) };
+  },
+
+  // ----- ROOMS -----
+  'GET /rooms': async ({ query }) => {
+    const semester = query.semester_id ?? (await currentSemesterId());
+    const rooms = (await run(sb().from('rooms').select('*').eq('is_active', true).order('building').order('code'))) as any[];
+    if (!semester) return rooms;
+    const schedules = await semesterSchedules(semester);
+    const day = query.day_of_week ? Number(query.day_of_week) : undefined;
+    return rooms.map((r) => {
+      const rows = schedules.filter((s: any) => !s.is_online && (s.room ?? '').toLowerCase() === String(r.code).toLowerCase() && (s.building ?? '') === r.building);
+      const clash =
+        day && query.start_time && query.end_time
+          ? rows.find((s: any) => overlaps(s, { day_of_week: day, start_time: query.start_time, end_time: query.end_time }))
+          : undefined;
+      return { ...r, weekly_sessions: rows.length, busy: !!clash, busy_with: clash ? `${clash.subject_name}, ${clash.class_name}` : null };
+    });
+  },
+  'POST /rooms': async ({ body }) => run(sb().from('rooms').insert(pick(body, ['building', 'code', 'capacity', 'room_type', 'note'])).select().single()),
+  'PATCH /rooms/:id': async ({ params, body }) =>
+    assertChanged(await run(sb().from('rooms').update(pick(body, ['building', 'code', 'capacity', 'room_type', 'note', 'is_active'])).eq('id', params.id).select()), 'Өрөө')[0],
+
+  // ----- COURSE MATERIALS (RLS-ээр эрх шалгагдана) -----
+  'GET /courses/:id/materials': async ({ params }) => {
+    const rows = await run(sb().from('course_materials').select(MATERIAL_SELECT).eq('course_id', params.id).order('created_at', { ascending: false }));
+    return (rows as any[]).map(mapMaterial);
+  },
+  'GET /courses/:id/materials/stats': async ({ params }) => {
+    const [materials, enrollments] = await Promise.all([
+      run(sb().from('course_materials').select('id').eq('course_id', params.id)) as Promise<{ id: string }[]>,
+      run(sb().from('enrollments').select('id').eq('course_id', params.id).neq('status', 'dropped')) as Promise<{ id: string }[]>,
+    ]);
+    const by_material: Record<string, { students: number; downloads: number }> = {};
+    if (materials.length) {
+      const access = (await run(
+        sb().from('course_material_access').select('material_id, download_count').in('material_id', materials.map((m) => m.id)),
+      )) as { material_id: string; download_count: number }[];
+      materials.forEach((m) => {
+        const rows = access.filter((a) => a.material_id === m.id);
+        by_material[m.id] = { students: rows.length, downloads: rows.reduce((sum, r) => sum + Number(r.download_count), 0) };
+      });
+    }
+    return { total_students: enrollments.length, by_material };
+  },
+  'GET /materials/me': async () => {
+    const s = await me();
+    const enr = (await run(sb().from('enrollments').select('course_id').eq('student_id', s.student?.id ?? ''))) as { course_id: string }[];
+    if (!enr.length) return [];
+    const rows = await run(
+      sb().from('course_materials').select(MATERIAL_SELECT).in('course_id', enr.map((e) => e.course_id)).eq('is_published', true).order('created_at', { ascending: false }),
+    );
+    return (rows as any[]).map(mapMaterial);
+  },
+  'POST /courses/:id/materials/upload-url': async ({ params, body }) => {
+    if (Number(body.size_bytes) > 50 * 1024 * 1024) throw new HttpError(422, 'Файлын хэмжээ 50MB-аас хэтэрсэн байна.');
+    const ext = String(body.file_name).toLowerCase().match(/\.([a-z0-9]{1,8})$/);
+    const path = `${params.id}/${crypto.randomUUID()}${ext ? `.${ext[1]}` : ''}`;
+    const { data, error } = await sb().storage.from(MATERIAL_BUCKET).createSignedUploadUrl(path);
+    if (error || !data) throw new HttpError(403, `Байршуулах холбоос үүсгэж чадсангүй: ${error?.message}`);
+    return { path, token: data.token, signed_url: data.signedUrl, bucket: MATERIAL_BUCKET };
+  },
+  'POST /courses/:id/materials': async ({ params, body }) => {
+    const s = await me();
+    const row = await run(
+      sb()
+        .from('course_materials')
+        .insert({
+          course_id: params.id,
+          uploaded_by: s.user.id,
+          title: body.title,
+          description: body.description || null,
+          file_path: body.file_path,
+          file_name: body.file_name,
+          mime_type: body.mime_type || null,
+          size_bytes: Number(body.size_bytes) || 0,
+          is_published: body.is_published !== false,
+        })
+        .select(MATERIAL_SELECT)
+        .single(),
+    );
+    return mapMaterial(row);
+  },
+  'GET /materials/:id/download': ({ params }) => materialLink(params.id, 'download'),
+  'GET /materials/:id/view': ({ params }) => materialLink(params.id, 'inline'),
+  'GET /materials/:id/access': async ({ params }) => {
+    const m = (await run(sb().from('course_materials').select('id, title, course_id').eq('id', params.id).single())) as any;
+    const [enrollments, access] = await Promise.all([
+      run(sb().from('enrollments').select('student_id, students(student_code, users(full_name))').eq('course_id', m.course_id).neq('status', 'dropped')) as Promise<any[]>,
+      run(sb().from('course_material_access').select('student_id, download_count, first_at, last_at').eq('material_id', params.id)) as Promise<any[]>,
+    ]);
+    const students = enrollments
+      .map((e) => {
+        const a = access.find((x) => x.student_id === e.student_id);
+        return {
+          student_id: e.student_id,
+          student_code: e.students?.student_code ?? '',
+          student_name: e.students?.users?.full_name ?? '',
+          downloaded: !!a,
+          download_count: Number(a?.download_count ?? 0),
+          first_at: a?.first_at ?? null,
+          last_at: a?.last_at ?? null,
+        };
+      })
+      .sort((a, b) => Number(b.downloaded) - Number(a.downloaded) || a.student_name.localeCompare(b.student_name));
+    return { material: { id: m.id, title: m.title }, total_students: students.length, downloaded_count: students.filter((s) => s.downloaded).length, students };
+  },
+  'PATCH /materials/:id': async ({ params, body }) => {
+    const rows = assertChanged(
+      await run(sb().from('course_materials').update(pick(body, ['title', 'description', 'is_published'])).eq('id', params.id).select(MATERIAL_SELECT)),
+      'Материал',
+    );
+    return mapMaterial(rows[0]);
+  },
+  'DELETE /materials/:id': async ({ params }) => {
+    const m = (await run(sb().from('course_materials').select('file_path').eq('id', params.id).single())) as { file_path: string };
+    assertChanged(await run(sb().from('course_materials').delete().eq('id', params.id).select('id')), 'Материал');
+    await sb().storage.from(MATERIAL_BUCKET).remove([m.file_path]);
     return { deleted: true };
   },
 
@@ -664,6 +940,75 @@ export const routes: Record<string, Handler> = {
   'DELETE /notifications/:id': async ({ params }) => {
     assertChanged(await run(sb().from('notifications').delete().eq('id', params.id).select('id')), 'Мэдэгдэл');
     return { deleted: true };
+  },
+
+  // ----- CERTIFICATES -----
+  'POST /certificates': async ({ body }) => {
+    const session = await me();
+    const student = session.student;
+    if (!student) throw new HttpError(403, 'Зөвхөн оюутан тодорхойлолт авна.');
+    if (student.status !== 'active') throw new HttpError(422, 'Суралцаж буй төлөвтэй оюутан тодорхойлолт авах боломжтой.');
+
+    const semester = (await run(sb().from('semesters').select('academic_year, name').eq('is_current', true).maybeSingle())) as any;
+    const enrollments = (await run(sb().from('enrollments').select('id').eq('student_id', student.id))) as any[];
+    const { count } = await sb().from('student_certificates').select('id', { count: 'exact', head: true });
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const includeGpa = body.include_gpa === true;
+    const yearLevel = student.enrollment_year ? Math.max(1, new Date().getFullYear() - Number(student.enrollment_year) + 1) : null;
+
+    const row = await run(
+      sb()
+        .from('student_certificates')
+        .insert({
+          student_id: student.id,
+          number: `ТОД-${new Date().getFullYear()}-${String((count ?? 0) + 1).padStart(5, '0')}`,
+          verify_code: Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join(''),
+          purpose: body.purpose ?? 'other',
+          purpose_note: body.purpose_note || null,
+          include_gpa: includeGpa,
+          snapshot: {
+            full_name: student.full_name,
+            last_name: student.last_name,
+            first_name: student.first_name,
+            student_code: student.student_code,
+            register_number: student.register_number,
+            program_name: student.program_name,
+            department_name: student.department_name,
+            class_name: student.class_name,
+            year_level: yearLevel,
+            enrollment_year: student.enrollment_year,
+            status: student.status,
+            semester: semester ? `${semester.academic_year} оны ${semester.name}` : null,
+            course_count: enrollments.length,
+            gpa: includeGpa ? student.gpa : null,
+            earned_credits: includeGpa ? student.earned_credits : null,
+          },
+          valid_until: new Date(Date.now() + (Number(body.valid_days) || 30) * 86400000).toISOString().slice(0, 10),
+        })
+        .select('*')
+        .single(),
+    );
+    return mapCertificate(row);
+  },
+  'GET /certificates/me': async () => {
+    const s = await me();
+    const rows = (await run(sb().from('student_certificates').select('*').eq('student_id', s.student?.id ?? '').order('issued_at', { ascending: false }))) as any[];
+    return rows.map(mapCertificate);
+  },
+  'GET /certificates': async ({ query }) => {
+    const rows = ((await run(sb().from('student_certificates').select('*').order('issued_at', { ascending: false }).limit(500))) as any[]).map(mapCertificate);
+    const q = String(query.q ?? '').toLowerCase();
+    return q ? rows.filter((c) => [c.student_name, c.student_code, c.number, c.verify_code].some((v) => String(v ?? '').toLowerCase().includes(q))) : rows;
+  },
+  'GET /certificates/:id': async ({ params }) => mapCertificate(await run(sb().from('student_certificates').select('*').eq('id', params.id).single())),
+  'POST /certificates/:id/revoke': async ({ params }) => {
+    const rows = assertChanged(await run(sb().from('student_certificates').update({ revoked_at: new Date().toISOString() }).eq('id', params.id).select('*')), 'Тодорхойлолт');
+    return mapCertificate(rows[0]);
+  },
+  'GET /certificates/verify/:code': async ({ params }) => {
+    const rows = (await run(sb().rpc('verify_certificate', { p_code: params.code }))) as any[];
+    if (!rows?.length) throw new HttpError(404, 'Ийм кодтой тодорхойлолт олдсонгүй.');
+    return { ...rows[0], revoked: !rows[0].is_valid && !!rows[0].valid_until };
   },
 
   // ----- AUDIT -----

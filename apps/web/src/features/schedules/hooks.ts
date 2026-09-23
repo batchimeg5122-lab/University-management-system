@@ -7,9 +7,20 @@ export const useSchedules = (filters: ScheduleFilters, enabled = true) =>
 export const useScheduleConflicts = (semesterId?: string, enabled = true) =>
   useQuery({ queryKey: ['schedules', 'conflicts', semesterId], queryFn: () => schedulesApi.conflicts(semesterId), enabled });
 
+/** Сонгосон хичээлд тохирох сул цагууд */
+export const useSlotSuggestions = (courseIds: string[], enabled: boolean) =>
+  useQuery({
+    queryKey: ['schedules', 'suggestions', courseIds],
+    queryFn: () => schedulesApi.suggestions(courseIds),
+    enabled: enabled && courseIds.length > 0,
+  });
+
 function useInvalidate() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: ['schedules'] });
+  return () => {
+    qc.invalidateQueries({ queryKey: ['schedules'] });
+    qc.invalidateQueries({ queryKey: ['rooms'] });
+  };
 }
 
 export function useCreateSchedule() {
@@ -19,10 +30,13 @@ export function useCreateSchedule() {
 
 export function useUpdateSchedule() {
   const done = useInvalidate();
-  return useMutation({ mutationFn: ({ id, ...b }: Partial<ScheduleInput> & { id: string }) => schedulesApi.update(id, b), onSuccess: done });
+  return useMutation({
+    mutationFn: ({ id, ...b }: Partial<Omit<ScheduleInput, 'course_ids'>> & { id: string; course_id?: string }) => schedulesApi.update(id, b),
+    onSuccess: done,
+  });
 }
 
 export function useDeleteSchedule() {
   const done = useInvalidate();
-  return useMutation({ mutationFn: (id: string) => schedulesApi.remove(id), onSuccess: done });
+  return useMutation({ mutationFn: ({ id, withGroup }: { id: string; withGroup?: boolean }) => schedulesApi.remove(id, withGroup), onSuccess: done });
 }

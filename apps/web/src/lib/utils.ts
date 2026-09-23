@@ -72,3 +72,12 @@ export function percent(value: number | null | undefined, digits = 0) {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
   return `${value.toFixed(digits)}%`;
 }
+
+/** 1.4 MB, 820 KB гэх мэт */
+export function formatBytes(bytes: number | null | undefined) {
+  if (!bytes) return '0 KB';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** i;
+  return `${value.toFixed(value >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}

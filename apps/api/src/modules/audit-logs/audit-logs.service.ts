@@ -10,6 +10,9 @@ export async function list(q: z.infer<typeof listAuditLogsQuery>) {
   if (q.action) query = query.eq('action', q.action);
   if (q.table) query = query.eq('table_name', q.table);
   if (q.user_id) query = query.eq('user_id', q.user_id);
+  // Хуучин бичлэгт source байхгүй — тэдгээрийг WEB гэж үзнэ
+  if (q.source === 'MOBILE') query = query.eq('new_data->>source', 'MOBILE');
+  if (q.source === 'WEB') query = query.or('new_data->>source.eq.WEB,new_data->>source.is.null');
   const rows = await run(query);
-  return rows.map(({ users, ...r }: any) => ({ ...r, user_name: users?.full_name ?? null }));
+  return rows.map(({ users, ...r }: any) => ({ ...r, user_name: users?.full_name ?? null, source: r.new_data?.source === 'MOBILE' ? 'MOBILE' : 'WEB' }));
 }

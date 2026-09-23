@@ -18,8 +18,10 @@ export const GRADE_SCALE: { min: number; letter: string; point: number }[] = [
   { min: 0, letter: 'F', point: 0 },
 ];
 
-export function scoreToGrade(total: number) {
-  const row = GRADE_SCALE.find((r) => total >= r.min) ?? GRADE_SCALE[GRADE_SCALE.length - 1];
+/** scale — системийн тохиргооноос (Админ → Тохиргоо → Үнэлгээний шкал), өгөөгүй бол анхдагч */
+export function scoreToGrade(total: number, scale: { min: number; letter: string; point: number }[] = GRADE_SCALE) {
+  const sorted = [...scale].sort((a, b) => b.min - a.min);
+  const row = sorted.find((r) => total >= r.min) ?? sorted[sorted.length - 1];
   return { letter: row.letter, point: row.point };
 }
 

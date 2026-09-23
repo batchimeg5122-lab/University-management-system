@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CreditCard } from 'lucide-react';
-import { DataTable, PageHeader, Panel, SearchInput, Select } from '@/components/ui';
+import { DataTable, ExportButton, PageHeader, Panel, SearchInput, Select } from '@/components/ui';
+import { exportExcel } from '@/lib/excel';
 import { usePayments } from '@/features/finance/hooks';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { PAYMENT_METHOD_LABEL } from '@/lib/constants';
@@ -14,7 +15,27 @@ export default function PaymentsPage() {
 
   return (
     <>
-      <PageHeader title="Төлөлт" description="Бүртгэгдсэн бүх төлөлт. Шинэ төлөлтийг нэхэмжлэлийн жагсаалтаас бүртгэнэ." />
+      <PageHeader
+        title="Төлөлт"
+        description="Бүртгэгдсэн бүх төлөлт. Шинэ төлөлтийг нэхэмжлэлийн жагсаалтаас бүртгэнэ."
+        actions={
+          <ExportButton
+            disabled={!data?.length}
+            onExport={() =>
+              exportExcel('tolbor', 'Төлөлт', [
+                { header: 'Огноо', value: (r) => formatDateTime(r.payment_date), width: 18 },
+                { header: 'Оюутны код', value: (r) => r.student_code },
+                { header: 'Оюутан', value: (r) => r.student_name, width: 28 },
+                { header: 'Нэхэмжлэл', value: (r) => r.invoice_number },
+                { header: 'Дүн', value: (r) => Number(r.amount) },
+                { header: 'Хэлбэр', value: (r) => PAYMENT_METHOD_LABEL[r.method] },
+                { header: 'Гүйлгээний дугаар', value: (r) => r.transaction_reference, width: 22 },
+                { header: 'Тайлбар', value: (r) => r.description, width: 30 },
+              ], data ?? [])
+            }
+          />
+        }
+      />
       <Panel flush>
         <div className="flex flex-col gap-2 border-b border-line px-4 py-3 sm:flex-row sm:items-center">
           <SearchInput value={filters.q} onChange={(q) => setFilters((f) => ({ ...f, q }))} placeholder="Оюутан, нэхэмжлэлийн дугаар" />

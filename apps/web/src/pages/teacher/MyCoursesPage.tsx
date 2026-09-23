@@ -35,10 +35,11 @@ export default function TeacherCoursesPage() {
                   <span className="num">{c.student_count} оюутан</span>
                 </p>
               </div>
-              <div className="grid grid-cols-3 border-t border-line text-[13px] font-medium">
-                <Link to={`/teacher/courses/${c.id}/attendance`} className="py-3 text-center text-ink-soft hover:bg-paper hover:text-ink">Ирц бүртгэх</Link>
-                <Link to={`/teacher/courses/${c.id}/grades`} className="border-x border-line py-3 text-center text-ink-soft hover:bg-paper hover:text-ink">Дүн оруулах</Link>
-                <Link to={`/teacher/courses/${c.id}/stats`} className="py-3 text-center text-ink-soft hover:bg-paper hover:text-ink">Статистик</Link>
+              <div className="grid grid-cols-2 border-t border-line text-[13px] font-medium sm:grid-cols-4">
+                <Link to={`/teacher/courses/${c.id}/attendance`} className="border-r border-line py-3 text-center text-ink-soft hover:bg-paper hover:text-ink">Ирц</Link>
+                <Link to={`/teacher/courses/${c.id}/grades`} className="py-3 text-center text-ink-soft hover:bg-paper hover:text-ink sm:border-r sm:border-line">Дүн</Link>
+                <Link to={`/teacher/courses/${c.id}/materials`} className="border-r border-t border-line py-3 text-center text-ink-soft hover:bg-paper hover:text-ink sm:border-t-0">Материал</Link>
+                <Link to={`/teacher/courses/${c.id}/stats`} className="border-t border-line py-3 text-center text-ink-soft hover:bg-paper hover:text-ink sm:border-t-0">Статистик</Link>
               </div>
             </article>
           ))}

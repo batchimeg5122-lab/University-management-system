@@ -4,6 +4,7 @@ import { unprocessable } from '../../middleware/error.middleware';
 import type { AuthUser } from '../../types/express';
 import { run } from '../../utils/api-response';
 import { avg, computeTotal, scoreToGrade, weightedGpa } from '../../utils/gpa';
+import { gradeScale } from '../settings/settings.service';
 import { COURSE_SELECT, mapCourse } from '../courses/courses.service';
 import { ENROLLMENT_SELECT, mapEnrollment } from '../enrollments/enrollments.service';
 import { notifyUsers } from '../notifications/notifications.service';
@@ -29,13 +30,14 @@ export async function save(courseId: string, input: z.infer<typeof saveGradesSch
     supabase.from('enrollments').select('id').eq('course_id', courseId).in('grade_status', ['draft', 'rejected']).in('id', input.rows.map((r) => r.enrollment_id)),
   );
   const allowed = new Set(editable.map((e) => e.id));
+  const scale = await gradeScale();
 
   await Promise.all(
     input.rows
       .filter((r) => allowed.has(r.enrollment_id))
       .map((r) => {
         const { total, complete } = computeTotal(r.scores, gradeItems);
-        const grade = complete ? scoreToGrade(total) : null;
+        const grade = complete ? scoreToGrade(total, scale) : null;
         return run(
           supabase
             .from('enrollments')
@@ -98,7 +100,7 @@ export async function approve(courseId: string, actor: AuthUser) {
   if (!rows.length) throw unprocessable('Баталгаажуулах дүн алга.');
   await recomputeGpa(rows.map((r) => r.student_id));
   const subject = (rows[0] as any).courses?.subjects?.name ?? 'Хичээл';
-  await notifyUsers(rows.map((r: any) => r.students?.user_id).filter(Boolean), 'Шинэ дүн баталгаажлаа', `${subject} хичээлийн таны дүн баталгаажлаа.`, 'grade', actor.id);
+  await notifyUsers(rows.map((r: any) => r.students?.user_id).filter(Boolean), 'Шинэ дүн баталгаажлаа', `${subject} хичээлийн таны дүн баталгаажлаа.`, 'grade', actor.id, { course_id: courseId });
   return { approved: rows.length };
 }
 
@@ -107,12 +109,56 @@ export async function reject(courseId: string, reason: string, actor: AuthUser) 
   if (!rows.length) throw unprocessable('Буцаах дүн алга.');
   const course = await run(supabase.from('courses').select('employees(user_id), subjects(name)').eq('id', courseId).single());
   const teacherUser = (course as any).employees?.user_id;
-  if (teacherUser) await notifyUsers([teacherUser], `Дүн буцаагдлаа: ${(course as any).subjects?.name ?? ''}`, reason, 'grade', actor.id);
+  if (teacherUser) await notifyUsers([teacherUser], `Дүн буцаагдлаа: ${(course as any).subjects?.name ?? ''}`, reason, 'grade', actor.id, { course_id: courseId });
   return { rejected: rows.length };
 }
 
 /** Оюутан зөвхөн баталгаажсан дүнгээ харна */
+/**
+ * Оюутны дүн.
+ * Баталгаажаагүй байсан ч ЯВЦЫН ОНОО харагдана (багшийн оруулсан бүрэлдэхүүн тус бүрээр).
+ * Үсгэн үнэлгээ, голч оноо зөвхөн баталгаажсаны дараа гарна.
+ */
 export async function mine(actor: AuthUser) {
   const rows = await run(supabase.from('enrollments').select(ENROLLMENT_SELECT).eq('student_id', actor.studentId ?? ''));
-  return rows.map(mapEnrollment).map((e) => (e.grade_status === 'approved' ? e : { ...e, scores: {}, total_score: null, letter_grade: null, gpa_point: null }));
+  const enrollments = rows.map(mapEnrollment);
+  const courseIds = [...new Set(enrollments.map((e) => e.course_id as string))];
+  const gradeItems = courseIds.length
+    ? ((await run(supabase.from('grade_items').select('*').in('course_id', courseIds).order('sort_order'))) as any[])
+    : [];
+
+  return enrollments.map((e) => {
+    const items = gradeItems.filter((i) => i.course_id === e.course_id);
+    const scores = (e.scores ?? {}) as Record<string, number>;
+    const graded = items.filter((i) => typeof scores[i.id] === 'number');
+    const earned = graded.reduce((sum, i) => sum + Number(scores[i.id]), 0);
+    const gradedMax = graded.reduce((sum, i) => sum + Number(i.max_score), 0);
+    const totalMax = items.reduce((sum, i) => sum + Number(i.max_score), 0);
+    const approved = e.grade_status === 'approved';
+
+    return {
+      ...e,
+      // Баталгаажаагүй үед эцсийн оноо, үнэлгээг харуулахгүй
+      total_score: approved ? e.total_score : null,
+      letter_grade: approved ? e.letter_grade : null,
+      gpa_point: approved ? e.gpa_point : null,
+      /** Явцын мэдээлэл — үргэлж харагдана */
+      progress: {
+        items: items.map((i) => ({
+          id: i.id,
+          name: i.name,
+          max_score: Number(i.max_score),
+          score: typeof scores[i.id] === 'number' ? Number(scores[i.id]) : null,
+        })),
+        earned: Math.round(earned * 100) / 100,
+        graded_max: gradedMax,
+        total_max: totalMax,
+        /** Оруулсан хэсгийн гүйцэтгэл, % */
+        percent: gradedMax ? Math.round((earned / gradedMax) * 1000) / 10 : null,
+        /** Нийт онооны хэдэн хувийг аль хэдийн цуглуулсан */
+        collected_percent: totalMax ? Math.round((earned / totalMax) * 1000) / 10 : null,
+        remaining_max: Math.max(0, totalMax - gradedMax),
+      },
+    };
+  });
 }

@@ -32,6 +32,18 @@ export function slotOf(start: string): TimeSlot | undefined {
   return TIME_SLOTS.find((s) => s.start === hhmm(start));
 }
 
+export type SessionType = 'lecture' | 'seminar' | 'lab' | 'exam';
+
+export const SESSION_TYPE_LABEL: Record<SessionType, string> = {
+  lecture: 'Лекц',
+  seminar: 'Семинар',
+  lab: 'Лаборатори',
+  exam: 'Шалгалт',
+};
+
+/** Нэгдсэн лекц зөвшөөрөх төрлүүд (нэг багш нэг өрөөнд олон ангид) */
+export const MERGEABLE: SessionType[] = ['lecture', 'exam'];
+
 /** Хуваарийн нэг мөрийг давхцал шалгахад шаардлагатай хэлбэр */
 export interface SlotEntry {
   id?: string;
@@ -43,6 +55,11 @@ export interface SlotEntry {
   end_time: string;
   room: string | null;
   building: string | null;
+  /** Нэгдсэн лекцийн бүлэг — нэг бүлгийн мөрүүд хоорондоо давхцахгүй */
+  group_id?: string | null;
+  /** Онлайн хичээл өрөө эзэлдэггүй */
+  is_online?: boolean;
+  session_type?: SessionType;
 }
 
 export type ConflictKind = 'class' | 'teacher' | 'room';
@@ -63,7 +80,15 @@ export function overlaps(a: Pick<SlotEntry, 'day_of_week' | 'start_time' | 'end_
 }
 
 const sameRoom = (a: SlotEntry, b: SlotEntry) =>
-  !!a.room && !!b.room && a.room.trim().toLowerCase() === b.room.trim().toLowerCase() && (a.building ?? '') === (b.building ?? '');
+  !a.is_online &&
+  !b.is_online &&
+  !!a.room &&
+  !!b.room &&
+  a.room.trim().toLowerCase() === b.room.trim().toLowerCase() &&
+  (a.building ?? '') === (b.building ?? '');
+
+/** Нэг нэгдсэн лекцийн бүлэгт багш, өрөө давхцахгүй (санаатай хуваалцаж байгаа) */
+const sameGroup = (a: SlotEntry, b: SlotEntry) => !!a.group_id && a.group_id === b.group_id;
 
 /** candidate-ийг бусад хуваарьтай харьцуулж давхцлуудыг буцаана (өөрийгөө алгасна) */
 export function findConflicts<T extends SlotEntry>(candidate: SlotEntry, others: T[]): Conflict<T>[] {
@@ -71,7 +96,9 @@ export function findConflicts<T extends SlotEntry>(candidate: SlotEntry, others:
   for (const o of others) {
     if (candidate.id && o.id === candidate.id) continue;
     if (!overlaps(candidate, o)) continue;
+    // Анги хоёр газар нэгэн зэрэг байж болохгүй — нэгдсэн лекц ч гэсэн
     if (candidate.class_id && o.class_id === candidate.class_id) out.push({ kind: 'class', with: o });
+    else if (sameGroup(candidate, o)) continue; // нэг нэгдсэн лекцийн мөрүүд
     else if (candidate.teacher_id && o.teacher_id === candidate.teacher_id) out.push({ kind: 'teacher', with: o });
     else if (sameRoom(candidate, o)) out.push({ kind: 'room', with: o });
   }
@@ -95,4 +122,9 @@ export function conflictMessage(kind: ConflictKind, other: { subject_name?: stri
   if (kind === 'class') return `Энэ анги энэ цагт өөр хичээлтэй байна${subject}.`;
   if (kind === 'teacher') return `Багш энэ цагт өөр хичээл заах хуваарьтай байна${subject}.`;
   return `${other.building ? `${other.building} ` : ''}${other.room} өрөө энэ цагт завгүй байна${subject}.`;
+}
+
+/** Нэг цагт өрөөнд байгаа хүний тоо (нэгдсэн лекцийн ангиудыг нэмж тооцно) */
+export function seatUsage(entries: { group_id?: string | null; student_count?: number }[], groupId?: string | null) {
+  return entries.filter((e) => !groupId || e.group_id === groupId).reduce((sum, e) => sum + (e.student_count ?? 0), 0);
 }

@@ -56,6 +56,7 @@ export default function TeacherDashboard() {
                   <div className="flex gap-1">
                     <Link to={`/teacher/courses/${c.id}/attendance`} className="rounded-field px-2.5 py-1.5 text-[13px] font-medium text-ink-soft hover:bg-paper hover:text-ink">Ирц</Link>
                     <Link to={`/teacher/courses/${c.id}/grades`} className="rounded-field px-2.5 py-1.5 text-[13px] font-medium text-ink-soft hover:bg-paper hover:text-ink">Дүн</Link>
+                    <Link to={`/teacher/courses/${c.id}/materials`} className="rounded-field px-2.5 py-1.5 text-[13px] font-medium text-ink-soft hover:bg-paper hover:text-ink">Материал</Link>
                     <Link to={`/teacher/courses/${c.id}/stats`} className="rounded-field px-2.5 py-1.5 text-[13px] font-medium text-ink-soft hover:bg-paper hover:text-ink">Статистик</Link>
                   </div>
                 </li>

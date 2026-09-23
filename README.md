@@ -4,7 +4,8 @@
 ikhzasag-web/
 ├── apps/
 │   ├── api/     Node.js + Express + TypeScript → Supabase (service_role)
-│   └── web/     React + Vite + TypeScript + Tailwind
+│   ├── web/     React + Vite + TypeScript + Tailwind
+│   └── mobile/  React Native + Expo + TypeScript (оюутан, багш)
 ├── package.json  хоёуланг нэг дор ажиллуулах скриптүүд
 └── README.md
 ```
@@ -81,3 +82,66 @@ from auth.users where email = 'admin@ikhzasag.edu.mn';
 3. Веб дээр нэвтэрч, бусад хэрэглэгч, оюутан, багшийг UI-аас бүртгэнэ.
 
 Дэлгэрэнгүй: `apps/api/README.md`, `apps/web/README.md`
+
+## Mobile App
+
+```bash
+npm run setup:mobile
+copy apps\mobile\.env.example apps\mobile\.env     # бөглөнө
+npm run dev:api       # нэг терминалд
+npm run dev:mobile    # өөр терминалд → QR-ыг Expo Go-оор уншуулна
+```
+
+Дэлгэрэнгүй: `apps/mobile/README.md`. Mobile-д шаардлагатай migration:
+`supabase/migrations/20260922000000_mobile_push_avatars.sql`
+
+## API баримт бичиг
+
+API асаалттай үед: http://localhost:4000/api/docs
+
+## Хөгжүүлэлтийн төлөвлөгөө
+
+`docs/ROADMAP.md`
+
+## Тест
+
+```bash
+npm test                      # API (Vitest, 33) + Web (Vitest, 9)
+cd apps/web
+npx playwright install chromium   # нэг удаа
+npm run test:e2e              # E2E (mock горим, backend хэрэггүй)
+```
+
+## Docker
+
+```bash
+copy .env.docker.example .env      # VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
+# apps/api/.env бөглөсөн байх (SERVICE_ROLE key)
+npm run docker:up                   # → http://localhost:8080
+```
+
+Web (nginx) нь `/api`-г API контейнер руу proxy хийнэ — CORS тохиргоо хэрэггүй.
+
+## 2FA (хоёр шатлалт баталгаажуулалт)
+
+1. Supabase Dashboard → **Authentication → Multi-Factor** → **TOTP** идэвхжүүлнэ
+2. Хэрэглэгч бүр Web → **Аюулгүй байдал** → **Идэвхжүүлэх** → Google/Microsoft Authenticator-аар QR уншуулна
+3. (Заавал болгох) Админ → **Системийн тохиргоо** → "Ажилтанд 2FA заавал"
+   — асаахаас өмнө өөрөө 2FA тохируулсан байх!
+
+## Supabase төрөл
+
+```bash
+npx supabase login        # нэг удаа
+npm run db:types          # apps/api/src/types/database.ts, apps/web/src/types/database.ts
+```
+
+## Нэг төхөөрөмжийн бодлого
+
+Админ → **Системийн тохиргоо** → "Платформ тус бүрт нэг нэвтрэлт":
+
+- Web дээр нэг, mobile дээр нэг session зэрэг ажиллана (компьютераар дүн, утсаар ирц хийх боломж хэвээр).
+- Шинээр нэвтрэхэд өмнөх төхөөрөмж **дараагийн хүсэлт дээрээ** гарч, шалтгааныг харуулна.
+- Аль эрхэд үйлчлэхийг сонгоно (жишээ нь зөвхөн оюутан).
+- Хэрэглэгч өөрийн идэвхтэй нэвтрэлтээ **Аюулгүй байдал** хуудаснаас хараад хаах боломжтой.
+

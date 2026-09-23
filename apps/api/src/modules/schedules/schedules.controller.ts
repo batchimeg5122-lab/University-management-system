@@ -7,20 +7,26 @@ export const list = asyncHandler(async (req, res) => ok(res, await service.list(
 
 export const conflicts = asyncHandler(async (req, res) => ok(res, await service.conflicts(req.query.semester_id as string | undefined)));
 
+export const suggestions = asyncHandler(async (req, res) => ok(res, await service.suggestions(req.query as never)));
+
 export const create = asyncHandler(async (req, res) => {
-  const row = await service.create(req.body);
-  audit(req, 'CREATE_SCHEDULE', 'schedules', row.id, req.body);
-  ok(res, row, 201);
+  const result = await service.create(req.body);
+  audit(req, result.schedules.length > 1 ? 'CREATE_MERGED_SCHEDULE' : 'CREATE_SCHEDULE', 'schedules', result.schedules[0]?.id ?? null, {
+    courses: req.body.course_ids,
+    day_of_week: req.body.day_of_week,
+    session_type: req.body.session_type,
+  });
+  ok(res, result, 201);
 });
 
 export const update = asyncHandler(async (req, res) => {
-  const row = await service.update(req.params.id, req.body);
+  const result = await service.update(req.params.id, req.body);
   audit(req, 'UPDATE_SCHEDULE', 'schedules', req.params.id, req.body);
-  ok(res, row);
+  ok(res, result);
 });
 
 export const remove = asyncHandler(async (req, res) => {
-  const result = await service.remove(req.params.id);
-  audit(req, 'DELETE_SCHEDULE', 'schedules', req.params.id);
+  const result = await service.remove(req.params.id, req.query.group === 'true');
+  audit(req, 'DELETE_SCHEDULE', 'schedules', req.params.id, { group: req.query.group === 'true' });
   ok(res, result);
 });

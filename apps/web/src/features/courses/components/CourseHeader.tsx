@@ -14,6 +14,7 @@ export function CourseHeader({ courseId }: { courseId: string }) {
         tabs={[
           { to: `/teacher/courses/${courseId}/attendance`, label: 'Ирц' },
           { to: `/teacher/courses/${courseId}/grades`, label: 'Дүн' },
+          { to: `/teacher/courses/${courseId}/materials`, label: 'Материал' },
           { to: `/teacher/courses/${courseId}/stats`, label: 'Статистик' },
         ]}
       />

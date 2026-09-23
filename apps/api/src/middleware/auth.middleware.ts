@@ -11,6 +11,19 @@ export function invalidateAuthCache(userId?: string) {
   for (const [token, entry] of cache) if (entry.user.id === userId) cache.delete(token);
 }
 
+/**
+ * JWT payload-оос aal (2FA түвшин), session_id-г уншина.
+ * Гарын үсгийг getUser() аль хэдийн шалгасан тул зөвхөн задалж уншина.
+ */
+export function tokenClaims(token: string): { aal: 'aal1' | 'aal2'; sessionId: string | null } {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8'));
+    return { aal: payload?.aal === 'aal2' ? 'aal2' : 'aal1', sessionId: payload?.session_id ?? null };
+  } catch {
+    return { aal: 'aal1', sessionId: null };
+  }
+}
+
 /** Authorization: Bearer <supabase access token> → req.user */
 export async function requireAuth(req: Request, _res: Response, next: NextFunction) {
   try {
@@ -43,6 +56,7 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
       email: row.email,
       studentId: student?.id ?? null,
       employeeId: employee?.id ?? null,
+      ...tokenClaims(token),
     };
     cache.set(token, { user, expires: Date.now() + TTL });
     req.user = user;

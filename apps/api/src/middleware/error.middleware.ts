@@ -3,7 +3,7 @@ import { ZodError } from 'zod';
 import { env } from '../config/env';
 
 export class HttpError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public code?: string) {
     super(message);
   }
 }
@@ -25,7 +25,7 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return res.status(422).json({ error: { message: `${issue.path.join('.') || 'Утга'}: ${issue.message}`, issues: err.issues } });
   }
   if (err instanceof HttpError) {
-    return res.status(err.status).json({ error: { message: err.message } });
+    return res.status(err.status).json({ error: { message: err.message, ...(err.code ? { code: err.code } : {}) } });
   }
   console.error(err);
   const message = !env.isProd && err instanceof Error ? err.message : 'Серверийн алдаа гарлаа.';

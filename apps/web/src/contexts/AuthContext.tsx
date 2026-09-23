@@ -8,6 +8,14 @@ import { clearSupabaseSessionCache } from '@/lib/supabase-adapter';
 import { supabase } from '@/lib/supabase';
 import type { Session, UserRole } from '@/types/models';
 
+/** Нууц үг зөв, гэхдээ 2FA кодын шат шаардлагатай */
+export class MfaRequiredError extends Error {
+  code = 'MFA_REQUIRED' as const;
+  constructor(public factorId: string) {
+    super('Баталгаажуулах апп дахь 6 оронтой кодыг оруулна уу.');
+  }
+}
+
 interface AuthContextValue {
   session: Session | null;
   loading: boolean;
@@ -16,12 +24,26 @@ interface AuthContextValue {
   /** Зөвхөн VITE_USE_MOCK=true үед */
   signInDemo: (role: UserRole) => Promise<Session>;
   signOut: () => Promise<void>;
+  /** 2FA кодоор нэвтрэлтийг дуусгах */
+  verifyMfa: (factorId: string, code: string) => Promise<Session>;
   refresh: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
 const fetchMe = () => get<Session>('/auth/me');
+
+/** Нэвтрэлтийн түүхэнд бичнэ (алдаа гарсан ч нэвтрэлтэд нөлөөлөхгүй) */
+const recordLogin = () => void post('/auth/login-event', { platform: 'web' }).catch(() => undefined);
+
+/** Хэрэглэгч 2FA тохируулсан ч энэ session нууц үгээр л (aal1) нэвтэрсэн бол factorId буцаана */
+async function pendingMfaFactor(): Promise<string | null> {
+  if (!supabase) return null;
+  const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (!data || data.nextLevel !== 'aal2' || data.currentLevel === 'aal2') return null;
+  const { data: factors } = await supabase.auth.mfa.listFactors();
+  return factors?.totp?.find((f) => f.status === 'verified')?.id ?? null;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -42,7 +64,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (sessionStorage.getItem(MOCK_SESSION_KEY)) await load();
       } else if (supabase) {
         const { data } = await supabase.auth.getSession();
-        if (data.session) {
+        // 2FA кодын шатыг дуусгаагүй session → дахин нэвтрүүлнэ
+        if (data.session && (await pendingMfaFactor())) await supabase.auth.signOut();
+        else if (data.session) {
           try {
             setSession(await fetchMe());
           } catch (err) {
@@ -100,6 +124,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (/rate limit/i.test(error.message)) throw new Error('Хэт олон удаа оролдлоо. Хэдэн минут хүлээгээд дахин оролдоно уу.');
       throw new Error(error.message);
     }
+    // 2FA идэвхтэй бол кодын шат руу
+    const factorId = await pendingMfaFactor();
+    if (factorId) throw new MfaRequiredError(factorId);
+
     clearSupabaseSessionCache();
     let me: Session;
     try {
@@ -113,6 +141,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw err;
     }
     setSession(me);
+    recordLogin();
+    return me;
+  }, []);
+
+  const verifyMfa = useCallback(async (factorId: string, code: string) => {
+    if (!supabase) throw new Error('Supabase тохиргоо дутуу байна.');
+    const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: code.replace(/\s/g, '') });
+    if (error) throw new Error(/invalid|expired/i.test(error.message) ? 'Код буруу эсвэл хугацаа дууссан байна. Шинэ кодыг оруулна уу.' : error.message);
+    clearSupabaseSessionCache();
+    const me = await fetchMe();
+    setSession(me);
+    recordLogin();
     return me;
   }, []);
 
@@ -124,6 +164,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return me;
   }, []);
 
+  // Өөр төхөөрөмжөөс нэвтэрсэн үед энэ session-ийг цэвэрлэж, Login дээр шалтгааныг харуулна
+  useEffect(() => {
+    const onReplaced = async (e: Event) => {
+      const message = (e as CustomEvent<string>).detail || 'Таны бүртгэлээр өөр төхөөрөмжөөс нэвтэрсэн тул энэ нэвтрэлт хаагдлаа.';
+      sessionStorage.setItem('auth-notice', message);
+      await supabase?.auth.signOut();
+      clearSupabaseSessionCache();
+      queryClient.clear();
+      setSession(null);
+    };
+    window.addEventListener('session-replaced', onReplaced);
+    return () => window.removeEventListener('session-replaced', onReplaced);
+  }, []);
+
   const signOut = useCallback(async () => {
     if (env.useMock) sessionStorage.removeItem(MOCK_SESSION_KEY);
     else await supabase?.auth.signOut();
@@ -132,7 +186,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(null);
   }, []);
 
-  const value = useMemo(() => ({ session, loading, signIn, signInDemo, signOut, refresh: load }), [session, loading, signIn, signInDemo, signOut, load]);
+  const value = useMemo(
+    () => ({ session, loading, signIn, signInDemo, signOut, verifyMfa, refresh: load }),
+    [session, loading, signIn, signInDemo, signOut, verifyMfa, load],
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
