@@ -4,6 +4,7 @@ import {
   DoorOpen, FileCheck2, FolderOpen, GraduationCap, LayoutGrid, Megaphone, PieChart, Receipt, ScrollText, School, ShieldCheck, User, UserSquare2, Users, Wallet,
   CalendarCheck, ScanLine, Send, Smartphone, HandCoins, Landmark, BadgePercent,
   AlertTriangle, CalendarHeart, KanbanSquare, Mail, TrendingUp, History, Settings, ShieldEllipsis,
+  Clock, Download,
 } from 'lucide-react';
 import type { UserRole } from '@/types/models';
 
@@ -26,6 +27,7 @@ const academicItems: NavItem[] = [
   { to: '/academic/broadcasts', label: 'Мэдэгдэл илгээх', icon: Send },
   { to: '/academic/at-risk', label: 'Сурлагын эрсдэл', icon: AlertTriangle },
   { to: '/academic/trends', label: 'Хандлага', icon: TrendingUp },
+  { to: '/academic/teacher-workload', label: 'Багшийн ачаалал', icon: Clock },
 ];
 
 const financeItems: NavItem[] = [
@@ -41,10 +43,12 @@ const notifications: NavItem = { to: '/notifications', label: 'Мэдэгдэл'
 const cardCheck: NavItem = { to: '/card-check', label: 'Үнэмлэх шалгах', icon: ScanLine };
 const calendar: NavItem = { to: '/calendar', label: 'Академик календарь', icon: CalendarHeart };
 const security: NavItem = { to: '/security', label: 'Аюулгүй байдал', icon: ShieldEllipsis };
+/** Эрх тус бүрт тохирсон татах боломжуудын нэгдсэн хуудас */
+const downloads: NavItem = { to: '/downloads', label: 'Мэдээлэл татах', icon: Download };
 
 export const NAVIGATION: Record<UserRole, NavGroup[]> = {
   super_admin: [
-    { items: [{ to: '/admin', label: 'Хяналтын самбар', icon: LayoutGrid, end: true }, notifications, calendar, security] },
+    { items: [{ to: '/admin', label: 'Хяналтын самбар', icon: LayoutGrid, end: true }, notifications, calendar, downloads, security] },
     {
       title: 'Систем',
       items: [
@@ -62,7 +66,7 @@ export const NAVIGATION: Record<UserRole, NavGroup[]> = {
     { title: 'Санхүү', items: financeItems },
   ],
   management: [
-    { items: [{ to: '/management', label: 'Нэгдсэн тойм', icon: LayoutGrid, end: true }, notifications, calendar, security] },
+    { items: [{ to: '/management', label: 'Нэгдсэн тойм', icon: LayoutGrid, end: true }, notifications, calendar, downloads, security] },
     {
       title: 'Статистик',
       items: [
@@ -80,6 +84,7 @@ export const NAVIGATION: Record<UserRole, NavGroup[]> = {
       items: [
         { to: '/academic/students', label: 'Оюутан', icon: GraduationCap },
         { to: '/academic/teachers', label: 'Багш', icon: UserSquare2 },
+        { to: '/academic/teacher-workload', label: 'Багшийн ачаалал', icon: Clock },
         { to: '/academic/exams', label: 'Шалгалтын хуваарь', icon: CalendarCheck },
         { to: '/academic/announcements', label: 'Зарлал', icon: Megaphone },
         { to: '/academic/broadcasts', label: 'Мэдэгдэл илгээх', icon: Send },
@@ -88,11 +93,11 @@ export const NAVIGATION: Record<UserRole, NavGroup[]> = {
     },
   ],
   academic: [
-    { items: [{ to: '/academic', label: 'Хяналтын самбар', icon: LayoutGrid, end: true }, notifications, calendar, cardCheck, security] },
+    { items: [{ to: '/academic', label: 'Хяналтын самбар', icon: LayoutGrid, end: true }, notifications, calendar, cardCheck, downloads, security] },
     { title: 'Сургалт', items: academicItems },
   ],
   finance: [
-    { items: [{ to: '/finance', label: 'Хяналтын самбар', icon: LayoutGrid, end: true }, notifications, calendar, cardCheck, security] },
+    { items: [{ to: '/finance', label: 'Хяналтын самбар', icon: LayoutGrid, end: true }, notifications, calendar, cardCheck, downloads, security] },
     { title: 'Санхүү', items: financeItems },
   ],
   teacher: [
@@ -101,9 +106,11 @@ export const NAVIGATION: Record<UserRole, NavGroup[]> = {
         { to: '/teacher', label: 'Нүүр', icon: LayoutGrid, end: true },
         { to: '/teacher/courses', label: 'Миний хичээлүүд', icon: BookOpen },
         { to: '/teacher/schedule', label: 'Хуваарь', icon: CalendarDays },
+        { to: '/teacher/workload', label: 'Хичээлийн цаг', icon: Clock },
         notifications,
         calendar,
         cardCheck,
+        downloads,
         security,
       ],
     },
@@ -121,6 +128,7 @@ export const NAVIGATION: Record<UserRole, NavGroup[]> = {
         { to: '/student/certificates', label: 'Тодорхойлолт', icon: FileCheck2 },
         notifications,
         calendar,
+        downloads,
         security,
         { to: '/student/profile', label: 'Миний мэдээлэл', icon: User },
       ],

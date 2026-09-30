@@ -4,6 +4,7 @@ import type { AuthUser } from '../../types/express';
 import { run } from '../../utils/api-response';
 import { syncInvoice } from '../invoices/invoices.service';
 import { notifyMany } from '../notifications/notifications.service';
+import { insertWithReceipt, nextReceiptNo } from './payments.service';
 import type { bulkPaymentsSchema, reconcilePreviewSchema } from './payments.schema';
 
 type Status = 'matched' | 'overpaid' | 'duplicate' | 'unmatched' | 'ambiguous' | 'no_invoice' | 'skip';
@@ -166,14 +167,16 @@ export async function createBulk(input: z.infer<typeof bulkPaymentsSchema>, acto
       duplicates++;
       continue;
     }
-    const { error } = await supabase.from('payments').insert({
+    const paidAt = r.payment_date ? new Date(r.payment_date) : new Date();
+    const { error } = await insertWithReceipt({
       invoice_id: inv.id,
       student_id: inv.student_id,
       amount: r.amount,
       method: 'bank_transfer',
       transaction_reference: r.transaction_reference ?? null,
       description: r.description ?? 'Банкны хуулгаас',
-      payment_date: r.payment_date ?? new Date().toISOString(),
+      payment_date: paidAt.toISOString(),
+      receipt_no: await nextReceiptNo(paidAt),
     });
     if (error) {
       errors.push({ invoice_id: r.invoice_id, message: error.message });

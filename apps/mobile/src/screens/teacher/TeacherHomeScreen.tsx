@@ -1,8 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { AppText, Avatar, Badge, Button, Card, EmptyState, ListItem, Screen, Section, Skeleton, StatGrid, StatTile } from '../../components';
 import { CountdownCard } from '../common/CountdownCard';
 import { SessionCard } from '../common/ScheduleScreen';
+import { CancelClassSheet } from './CancelClassSheet';
+import type { Schedule } from '../../types/models';
 import { useNotifications, useTeacherDashboard } from '../../hooks/queries';
 import { useRefresh } from '../../hooks/useRefresh';
 import type { TabScreenProps } from '../../navigation/types';
@@ -18,6 +21,8 @@ export function TeacherHomeScreen({ navigation }: TabScreenProps<'HomeTab'>) {
   const dash = useTeacherDashboard();
   const notifications = useNotifications();
   const { refreshing, onRefresh } = useRefresh(dash.refetch, notifications.refetch);
+  /** Хичээлийн цаг дээр дарахад гарах "Өнөөдөр хичээл орохгүй" цонх */
+  const [cancelTarget, setCancelTarget] = useState<Schedule | null>(null);
   const d = dash.data;
   const unread = (notifications.data ?? []).filter((n) => n.user_id && !n.is_read).slice(0, 3);
   const gradeTodo = d ? d.grades.draft_courses + d.grades.rejected_courses : 0;
@@ -69,14 +74,18 @@ export function TeacherHomeScreen({ navigation }: TabScreenProps<'HomeTab'>) {
         ) : d.today.length ? (
           d.today.map((s) => (
             <View key={s.id} style={styles.session}>
-              <SessionCard s={s} teacherView />
-              <Button
-                size="sm"
-                variant={s.attendance_taken ? 'secondary' : 'primary'}
-                icon={s.attendance_taken ? 'checkmark-circle' : 'create-outline'}
-                title={s.attendance_taken ? 'Ирц бүртгэгдсэн · засах' : 'Ирц бүртгэх'}
-                onPress={() => navigation.navigate('AttendanceEntry', { courseId: s.course_id, title: s.subject_name, date: d.date })}
-              />
+              <SessionCard s={s} teacherView forDate={d.date} onPress={() => setCancelTarget(s)} />
+              {s.cancelled_today ? (
+                <Button size="sm" variant="secondary" icon="close-circle-outline" title="Цуцлагдсан · дэлгэрэнгүй" onPress={() => setCancelTarget(s)} />
+              ) : (
+                <Button
+                  size="sm"
+                  variant={s.attendance_taken ? 'secondary' : 'primary'}
+                  icon={s.attendance_taken ? 'checkmark-circle' : 'create-outline'}
+                  title={s.attendance_taken ? 'Ирц бүртгэгдсэн · засах' : 'Ирц бүртгэх'}
+                  onPress={() => navigation.navigate('AttendanceEntry', { courseId: s.course_id, title: s.subject_name, date: d.date })}
+                />
+              )}
             </View>
           ))
         ) : (
@@ -91,6 +100,7 @@ export function TeacherHomeScreen({ navigation }: TabScreenProps<'HomeTab'>) {
       <View style={styles.quick}>
         {[
           { label: 'Миний хичээл', icon: 'book-outline' as const, go: () => navigation.navigate('CoursesTab') },
+          { label: 'Хичээлийн цаг', icon: 'time-outline' as const, go: () => navigation.navigate('Workload') },
           { label: 'Статистик', icon: 'bar-chart-outline' as const, go: () => navigation.navigate('Statistics') },
           { label: 'Шалгалт', icon: 'calendar-outline' as const, go: () => navigation.navigate('Exams') },
           { label: 'Зарлал', icon: 'megaphone-outline' as const, go: () => navigation.navigate('Announcements') },
@@ -132,6 +142,7 @@ export function TeacherHomeScreen({ navigation }: TabScreenProps<'HomeTab'>) {
         </Card>
       </Section>
       {d?.grades.submitted_courses ? <Badge label={`${d.grades.submitted_courses} хичээлийн дүн хянагдаж байна`} tone="accent" /> : null}
+      <CancelClassSheet visible={!!cancelTarget} onClose={() => setCancelTarget(null)} session={cancelTarget} targetDate={d?.date} />
     </Screen>
   );
 }
@@ -141,7 +152,7 @@ const styles = StyleSheet.create({
   hello: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   session: { gap: spacing.sm },
-  quick: { flexDirection: 'row', gap: spacing.md },
-  quickItem: { flex: 1, alignItems: 'center', gap: 6, paddingVertical: spacing.md, borderRadius: radius.lg, borderWidth: 1, minHeight: 72, justifyContent: 'center' },
+  quick: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
+  quickItem: { flexBasis: '30%', flexGrow: 1, alignItems: 'center', gap: 6, paddingHorizontal: 4, paddingVertical: spacing.md, borderRadius: radius.lg, borderWidth: 1, minHeight: 72, justifyContent: 'center' },
   listCard: { paddingHorizontal: spacing.lg },
 });

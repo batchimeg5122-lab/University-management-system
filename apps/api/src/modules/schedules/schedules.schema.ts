@@ -4,6 +4,8 @@ const time = z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Цаг HH:MM хэлбэ
 const uuidOrEmpty = z.string().uuid().optional().or(z.literal(''));
 const sessionType = z.enum(['lecture', 'seminar', 'lab', 'exam']);
 
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Огноо YYYY-MM-DD хэлбэртэй байна');
+
 export const listSchedulesQuery = z.object({
   course_id: uuidOrEmpty,
   class_id: uuidOrEmpty,
@@ -11,6 +13,24 @@ export const listSchedulesQuery = z.object({
   room: z.string().optional(),
   semester_id: uuidOrEmpty,
   mine: z.enum(['true', 'false']).optional(),
+  /** Цуцлалтыг харуулах хугацааны хязгаар (default: өнөөдрөөс 2 долоо хоног) */
+  cancel_from: isoDate.optional(),
+  cancel_to: isoDate.optional(),
+});
+
+/** Багш тухайн өдрийн хичээлээ цуцлах */
+export const cancelClassSchema = z.object({
+  /** Цуцлах өдөр — оруулаагүй бол өнөөдөр */
+  date: isoDate.optional(),
+  reason: z.string().trim().max(300, 'Шалтгаан 300 тэмдэгтээс хэтрэхгүй').optional().nullable(),
+});
+
+export const restoreClassQuery = z.object({ date: isoDate.optional() });
+
+export const cancellationsQuery = z.object({
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+  course_id: uuidOrEmpty,
 });
 
 export const conflictsQuery = z.object({ semester_id: uuidOrEmpty });

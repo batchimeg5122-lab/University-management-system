@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import { errorMessage } from '../../api/client';
-import { AppText, Badge, Card, EmptyState, ErrorState, OfflineBanner, SkeletonList } from '../../components';
+import { financeApi } from '../../api/finance.api';
+import { AppText, Badge, Button, Card, EmptyState, ErrorState, OfflineBanner, SkeletonList, useToast } from '../../components';
 import { useMyPayments } from '../../hooks/queries';
 import { useRefresh } from '../../hooks/useRefresh';
+import { shareReceiptPdf } from '../../services/receiptPdf';
 import { spacing, useTheme } from '../../theme';
 import { PAYMENT_METHOD_LABEL } from '../../utils/constants';
 import { date, money } from '../../utils/format';
@@ -13,9 +15,25 @@ const PAGE = 20;
 /** §17 Төлбөрийн түүх — infinite scroll */
 export function PaymentHistoryScreen() {
   const { colors } = useTheme();
+  const toast = useToast();
   const q = useMyPayments();
   const { refreshing, onRefresh } = useRefresh(q.refetch);
   const [limit, setLimit] = useState(PAGE);
+  /** Баримт бэлдэж байгаа төлөлт */
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  /** Төлбөр төлсөн баримтыг PDF болгоод Share цонх нээнэ */
+  const shareReceipt = async (paymentId: string) => {
+    setBusyId(paymentId);
+    try {
+      const receipt = await financeApi.receipt(paymentId);
+      await shareReceiptPdf(receipt);
+    } catch (err) {
+      toast.show(errorMessage(err), 'danger');
+    } finally {
+      setBusyId(null);
+    }
+  };
   const rows = [...(q.data ?? [])].sort((a, b) => b.payment_date.localeCompare(a.payment_date));
   const total = rows.reduce((s, p) => s + Number(p.amount), 0);
 
@@ -75,6 +93,15 @@ export function PaymentHistoryScreen() {
                 <Badge label="Төлөгдсөн" tone="success" />
               </View>
             </View>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon="download-outline"
+              title="Баримт татах"
+              loading={busyId === p.id}
+              onPress={() => void shareReceipt(p.id)}
+              style={styles.receiptBtn}
+            />
           </Card>
         )}
       />
@@ -88,4 +115,5 @@ const styles = StyleSheet.create({
   header: { marginBottom: spacing.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   right: { alignItems: 'flex-end', gap: 4 },
+  receiptBtn: { marginTop: spacing.sm },
 });

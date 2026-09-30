@@ -39,6 +39,9 @@ export const qk = {
   studentCard: ['student-card'] as const,
   exams: (upcoming: boolean) => ['exams', upcoming ? 'upcoming' : 'all'] as const,
   calendar: ['calendar'] as const,
+  cancellations: ['schedules', 'cancellations'] as const,
+  workload: ['workload'] as const,
+  receipt: (paymentId: string) => ['payments', 'receipt', paymentId] as const,
 };
 
 // ------------------------------------------------------------------ Нийтлэг
@@ -56,6 +59,32 @@ export const useCourses = () => useQuery({ queryKey: qk.courses, queryFn: () => 
 export const useSchedules = (courseId?: string) =>
   useQuery({ queryKey: qk.schedules(courseId), queryFn: () => scheduleApi.list(courseId ? { course_id: courseId } : {}) });
 export const useCurrentSemester = () => useQuery({ queryKey: qk.semester, queryFn: scheduleApi.currentSemester, staleTime: 10 * 60_000 });
+
+/** Цуцлагдсан хичээлүүд (багш — өөрийнх, оюутан — бүртгэлтэй хичээл) */
+export const useCancellations = () => useQuery({ queryKey: qk.cancellations, queryFn: () => scheduleApi.cancellations() });
+
+/**
+ * Багш тухайн өдрийн хичээлээ цуцлах / цуцлалтыг буцаах.
+ * Серверээс оюутнуудад мэдэгдэл автоматаар илгээгдэнэ.
+ */
+export function useCancelClass() {
+  const qc = useQueryClient();
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['schedules'] });
+    qc.invalidateQueries({ queryKey: qk.teacherDashboard });
+    qc.invalidateQueries({ queryKey: qk.notifications });
+  };
+  const cancel = useMutation({
+    mutationFn: ({ scheduleId, date, reason }: { scheduleId: string; date: string; reason?: string | null }) =>
+      scheduleApi.cancelClass(scheduleId, { date, reason }),
+    onSuccess: refresh,
+  });
+  const restore = useMutation({
+    mutationFn: ({ scheduleId, date }: { scheduleId: string; date: string }) => scheduleApi.restoreClass(scheduleId, date),
+    onSuccess: refresh,
+  });
+  return { cancel, restore };
+}
 
 /** Шалгалтын хуваарь (Сургалтын алба / багш товлосон) */
 export const useExams = (upcoming = true) => useQuery({ queryKey: qk.exams(upcoming), queryFn: () => examApi.list(upcoming) });
@@ -123,6 +152,13 @@ export const useCourseMaterials = (courseId: string) =>
 
 // ------------------------------------------------------------------ Багш
 export const useTeacherDashboard = () => useQuery({ queryKey: qk.teacherDashboard, queryFn: teacherApi.dashboard });
+
+/** Багшийн хичээлийн цагийн тайлан (ачаалал) */
+export const useWorkload = () => useQuery({ queryKey: qk.workload, queryFn: () => teacherApi.workload(), staleTime: 5 * 60_000 });
+
+/** Төлбөр төлсөн баримт — PDF болгоход шаардах мэдээлэл */
+export const usePaymentReceipt = (paymentId: string | null) =>
+  useQuery({ queryKey: qk.receipt(paymentId ?? 'none'), queryFn: () => financeApi.receipt(paymentId!), enabled: !!paymentId, staleTime: 5 * 60_000 });
 export const useEnrollments = (courseId: string) =>
   useQuery({ queryKey: qk.enrollments(courseId), queryFn: () => courseApi.enrollments(courseId), enabled: !!courseId });
 export const useGradeItems = (courseId: string) =>

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Check } from 'lucide-react';
-import { Button, ErrorState, Input, PageLoader, Panel, SearchInput } from '@/components/ui';
+import { Button, ErrorState, ExportButton, Input, PageLoader, Panel, SearchInput } from '@/components/ui';
+import { attendanceApi } from '@/features/attendance/api';
 import { useAttendanceDates, useCourseAttendance, useSaveAttendance } from '@/features/attendance/hooks';
 import { CourseHeader } from '@/features/courses/components/CourseHeader';
 import { useCourseEnrollments } from '@/features/grades/hooks';
@@ -9,6 +10,7 @@ import { useSchedules } from '@/features/schedules/hooks';
 import { useToast } from '@/components/ui/Toast';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { errorMessage } from '@/lib/api';
+import { exportExcel } from '@/lib/excel';
 import { ATTENDANCE_LABEL, DAY_LABEL } from '@/lib/constants';
 import { cn, toISODate } from '@/lib/utils';
 import type { AttendanceStatus } from '@/types/models';
@@ -48,6 +50,48 @@ export default function CourseAttendancePage() {
   const rows = enrollments?.filter((e) => !q || (e.student_name ?? '').toLowerCase().includes(q.toLowerCase()) || (e.student_code ?? '').toLowerCase().includes(q.toLowerCase()));
   const unmarked = enrollments?.filter((e) => !marks[e.student_id]).length ?? 0;
   const counts = STATUSES.map((s) => ({ s, n: Object.values(marks).filter((m) => m === s).length }));
+
+  /**
+   * Ирцийн журнал — бүх огнооны ирцийг матриц (оюутан × огноо) болгон Excel-д гаргана.
+   * Товч дарах үед бүх бичлэгийг сервэрээс татна.
+   */
+  const exportJournal = async () => {
+    const all = await attendanceApi.byCourse(courseId);
+    const allDates = [...new Set(all.map((r) => r.attendance_date))].sort();
+    const byStudent = new Map<string, Record<string, AttendanceStatus>>();
+    all.forEach((r) => byStudent.set(r.student_id, { ...(byStudent.get(r.student_id) ?? {}), [r.attendance_date]: r.status }));
+
+    const short = (s: AttendanceStatus | undefined) =>
+      s ? ({ present: 'И', late: 'Х', absent: 'Т', sick: 'Ө', excused: 'З' } as Record<AttendanceStatus, string>)[s] : '';
+
+    await exportExcel(
+      'irtsiin-jurnal',
+      'Ирц',
+      [
+        { header: 'Оюутны код', value: (e) => e.student_code, width: 14 },
+        { header: 'Оюутан', value: (e) => e.student_name, width: 28 },
+        ...allDates.map((d) => ({
+          header: d.slice(5).replace('-', '.'),
+          value: (e: NonNullable<typeof enrollments>[number]) => short(byStudent.get(e.student_id)?.[d]),
+          width: 7,
+        })),
+        { header: 'Ирсэн', value: (e) => Object.values(byStudent.get(e.student_id) ?? {}).filter((s) => s === 'present').length },
+        { header: 'Хоцорсон', value: (e) => Object.values(byStudent.get(e.student_id) ?? {}).filter((s) => s === 'late').length },
+        { header: 'Тасалсан', value: (e) => Object.values(byStudent.get(e.student_id) ?? {}).filter((s) => s === 'absent').length },
+        {
+          header: 'Ирцийн хувь',
+          value: (e) => {
+            const marks = Object.values(byStudent.get(e.student_id) ?? {});
+            if (!marks.length) return '';
+            const ok = marks.filter((s) => s === 'present' || s === 'late' || s === 'excused' || s === 'sick').length;
+            return Math.round((ok / marks.length) * 100);
+          },
+          width: 12,
+        },
+      ],
+      enrollments ?? [],
+    );
+  };
 
   const markAll = () => enrollments && setMarks((m) => ({ ...m, ...Object.fromEntries(enrollments.filter((e) => !m[e.student_id]).map((e) => [e.student_id, 'present' as const])) }));
 
@@ -99,6 +143,7 @@ export default function CourseAttendancePage() {
         actions={
           <>
             <SearchInput value={q} onChange={setQ} placeholder="Оюутан хайх" className="sm:w-52" />
+            <ExportButton label="Ирцийн журнал" disabled={!enrollments?.length} onExport={exportJournal} />
             {unmarked > 0 && <Button size="sm" icon={<Check className="h-3.5 w-3.5" />} onClick={markAll}>Үлдсэнийг ирсэн</Button>}
           </>
         }

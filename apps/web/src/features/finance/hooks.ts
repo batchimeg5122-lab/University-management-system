@@ -8,6 +8,10 @@ export const usePayments = (f: { q?: string; method?: string }) => useQuery({ qu
 export const useMyPayments = () => useQuery({ queryKey: ['payments', 'me'], queryFn: financeApi.myPayments });
 export const useFinanceReport = (semesterId?: string) => useQuery({ queryKey: ['reports', 'finance', semesterId], queryFn: () => financeApi.report(semesterId) });
 
+/** Төлбөр төлсөн баримт — paymentId байхад л татна */
+export const usePaymentReceipt = (paymentId: string | null) =>
+  useQuery({ queryKey: ['payments', 'receipt', paymentId], queryFn: () => financeApi.receipt(paymentId!), enabled: !!paymentId, staleTime: 5 * 60_000 });
+
 function useInvalidateFinance() {
   const qc = useQueryClient();
   return () => {

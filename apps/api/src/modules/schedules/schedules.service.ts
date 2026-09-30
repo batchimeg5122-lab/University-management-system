@@ -1,16 +1,19 @@
 import type { z } from 'zod';
 import { supabase } from '../../config/supabase';
 import { randomUUID } from 'node:crypto';
-import { conflict, notFound, unprocessable } from '../../middleware/error.middleware';
+import { conflict, forbidden, HttpError, notFound, unprocessable } from '../../middleware/error.middleware';
 import type { AuthUser } from '../../types/express';
 import { required, run } from '../../utils/api-response';
+import { addDays, localDate, weekdayOf } from '../../utils/local-date';
 import { TIME_SLOTS, WEEK_DAYS, conflictMessage, findAllConflicts, findConflicts, overlaps, type SlotEntry } from '../../utils/timetable';
 import { currentId } from '../semesters/semesters.service';
 import { notifyCourseStudents, notifyUsers } from '../notifications/notifications.service';
-import type { createScheduleSchema, listSchedulesQuery, suggestionsQuery, updateScheduleSchema } from './schedules.schema';
+import type { cancelClassSchema, cancellationsQuery, createScheduleSchema, listSchedulesQuery, suggestionsQuery, updateScheduleSchema } from './schedules.schema';
 
 const SELECT = '*, courses!inner(semester_id, class_id, teacher_id, subjects(code,name), classes(code), employees(users(full_name)), enrollments(count))';
 const NO_MATCH = '00000000-0000-0000-0000-000000000000';
+
+export type Cancellation = { cancel_date: string; reason: string | null; cancelled_by_name?: string | null };
 
 export type ScheduleRow = SlotEntry & {
   id: string;
@@ -20,6 +23,10 @@ export type ScheduleRow = SlotEntry & {
   subject_name?: string;
   teacher_name: string | null;
   class_name: string | null;
+  /** Ойрын хугацаанд цуцлагдсан өдрүүд */
+  cancellations?: Cancellation[];
+  /** Өнөөдрийн хичээл цуцлагдсан эсэх */
+  cancelled_today?: boolean;
 };
 
 const mapSchedule = ({ courses, ...r }: any): ScheduleRow => ({
@@ -72,7 +79,213 @@ export async function list(q: z.infer<typeof listSchedulesQuery>, actor: AuthUse
     const room = q.room.trim().toLowerCase();
     rows = rows.filter((r) => (r.room ?? '').trim().toLowerCase() === room);
   }
+  await attachCancellations(rows, q.cancel_from, q.cancel_to);
   return sortRows(rows);
+}
+
+// =====================================================================
+// ХИЧЭЭЛ ЦУЦЛАХ — багш тухайн өдрийн хичээлээ орж чадахгүй болсон үед
+// =====================================================================
+
+/** class_cancellations хүснэгт байхгүй бол (migration ажиллаагүй) чимээгүй алгасна */
+async function readCancellations(scheduleIds: string[], from: string, to: string) {
+  if (!scheduleIds.length) return [];
+  const { data, error } = await supabase
+    .from('class_cancellations')
+    .select('schedule_id, cancel_date, reason')
+    .in('schedule_id', scheduleIds)
+    .gte('cancel_date', from)
+    .lte('cancel_date', to);
+  if (error) {
+    if (error.code !== '42P01' && error.code !== 'PGRST205') console.warn('[class-cancel]', error.message);
+    return [];
+  }
+  return (data ?? []) as { schedule_id: string; cancel_date: string; reason: string | null }[];
+}
+
+/** Хуваарийн мөр бүрт ойрын цуцлалтуудыг залгана (default: өнөөдрөөс 2 долоо хоног) */
+async function attachCancellations(rows: ScheduleRow[], from?: string, to?: string) {
+  const today = localDate();
+  const start = from || today;
+  const end = to || addDays(today, 14);
+  const list = await readCancellations(rows.map((r) => r.id), start, end);
+  const byId = new Map<string, Cancellation[]>();
+  for (const c of list) {
+    const arr = byId.get(c.schedule_id) ?? [];
+    arr.push({ cancel_date: c.cancel_date, reason: c.reason });
+    byId.set(c.schedule_id, arr);
+  }
+  for (const r of rows) {
+    const arr = (byId.get(r.id) ?? []).sort((a, b) => a.cancel_date.localeCompare(b.cancel_date));
+    r.cancellations = arr;
+    r.cancelled_today = arr.some((c) => c.cancel_date === today);
+  }
+  return rows;
+}
+
+/** Зөвхөн Сургалтын алба, админ, эсвэл тухайн хичээлийн багш цуцалж болно */
+async function assertCanCancel(courseId: string, actor: AuthUser) {
+  if (['super_admin', 'academic'].includes(actor.role)) return;
+  if (actor.role === 'teacher') {
+    const c = await run(supabase.from('courses').select('teacher_id').eq('id', courseId).maybeSingle());
+    if (c?.teacher_id === actor.employeeId) return;
+  }
+  throw forbidden('Зөвхөн хичээлийн багш эсвэл Сургалтын алба хичээл цуцална.');
+}
+
+/** Нэгдсэн лекц бол бүлгийн бүх мөрийг хамт цуцална */
+async function cancelTargets(id: string): Promise<ScheduleRow[]> {
+  const current = required(await run(supabase.from('schedules').select('id, group_id').eq('id', id)), 'Хуваарь олдсонгүй.')[0];
+  const query = current.group_id
+    ? supabase.from('schedules').select(SELECT).eq('group_id', current.group_id)
+    : supabase.from('schedules').select(SELECT).eq('id', id);
+  return (await run(query)).map(mapSchedule);
+}
+
+const hhmm = (t: unknown) => String(t ?? '').slice(0, 5);
+const slotText = (r: ScheduleRow, date: string) =>
+  `${r.subject_name ?? 'Хичээл'}${r.subject_code ? ` (${r.subject_code})` : ''}\n${date} · ${DAY_NAME[r.day_of_week] ?? ''} ${hhmm(r.start_time)}–${hhmm(r.end_time)}`;
+
+/**
+ * Тухайн өдрийн хичээлийг цуцална.
+ * - Огноо нь хуваарийн гарагтай таарах ёстой
+ * - Өнгөрсөн өдрийг цуцлах боломжгүй
+ * - Цуцалсны дараа тухайн хичээлд хамрагдах БҮХ оюутанд мэдэгдэл + push илгээнэ
+ */
+export async function cancelClass(id: string, input: z.infer<typeof cancelClassSchema>, actor: AuthUser) {
+  const today = localDate();
+  const date = input.date || today;
+  if (date < today) throw unprocessable('Өнгөрсөн өдрийн хичээлийг цуцлах боломжгүй.');
+  if (date > addDays(today, 30)) throw unprocessable('Хамгийн ихдээ 30 хоногийн дараах хичээлийг цуцална.');
+
+  const rows = await cancelTargets(id);
+  const target = rows.find((r) => r.id === id) ?? rows[0];
+  if (!target) throw notFound('Хуваарь олдсонгүй.');
+  if (weekdayOf(date) !== target.day_of_week) {
+    throw unprocessable(`Сонгосон огноо (${date}) нь хуваарийн гараг (${DAY_NAME[target.day_of_week]})-тай таарахгүй байна.`);
+  }
+  await assertCanCancel(target.course_id, actor);
+
+  const reason = input.reason?.trim() || null;
+  const payload = rows.map((r) => ({ schedule_id: r.id, course_id: r.course_id, cancel_date: date, reason, cancelled_by: actor.id }));
+  const { error } = await supabase.from('class_cancellations').upsert(payload, { onConflict: 'schedule_id,cancel_date' });
+  if (error) {
+    if (error.code === '42P01' || error.code === 'PGRST205') {
+      throw unprocessable('Хичээл цуцлах хүснэгт (class_cancellations) өгөгдлийн санд алга. Migration-ыг ажиллуулна уу.');
+    }
+    throw new HttpError(500, `Хичээл цуцлахад алдаа гарлаа: ${error.message}`);
+  }
+
+  void announceCancellation(rows, date, reason, actor, today);
+  return {
+    cancelled: true,
+    cancel_date: date,
+    reason,
+    schedule_ids: rows.map((r) => r.id),
+    schedules: sortRows(await attachCancellations(rows)),
+  };
+}
+
+/** Цуцлалтыг буцаах — хичээл хэвийн орно */
+export async function restoreClass(id: string, date: string | undefined, actor: AuthUser) {
+  const day = date || localDate();
+  const rows = await cancelTargets(id);
+  const target = rows.find((r) => r.id === id) ?? rows[0];
+  if (!target) throw notFound('Хуваарь олдсонгүй.');
+  await assertCanCancel(target.course_id, actor);
+
+  const { error } = await supabase.from('class_cancellations').delete().in('schedule_id', rows.map((r) => r.id)).eq('cancel_date', day);
+  if (error && error.code !== '42P01' && error.code !== 'PGRST205') throw new HttpError(500, `Цуцлалтыг буцаахад алдаа гарлаа: ${error.message}`);
+
+  void notifyCourseStudents(
+    rows.map((r) => r.course_id),
+    'Хичээл хэвийн орно',
+    `${slotText(target, day)}\n\nЦуцлалт хүчингүй болсон — хичээл хуваарийн дагуу орно.`,
+    'schedule',
+    actor.id,
+    { kind: 'class_restored', schedule_id: target.id, cancel_date: day },
+  );
+
+  return { restored: true, cancel_date: day, schedule_ids: rows.map((r) => r.id), schedules: sortRows(await attachCancellations(rows)) };
+}
+
+/** Оюутнуудад автомат мэдэгдэл (in-app + mobile push) */
+async function announceCancellation(rows: ScheduleRow[], date: string, reason: string | null, actor: AuthUser, today: string) {
+  try {
+    const target = rows[0];
+    if (!target) return;
+    const title = date === today ? 'Өнөөдрийн хичээл цуцлагдлаа' : 'Хичээл цуцлагдлаа';
+    const lines = [slotText(target, date), '', date === today ? 'Өнөөдрийн хичээл цуцлагдлаа.' : 'Тухайн өдрийн хичээл цуцлагдлаа.'];
+    if (reason) lines.push(`Шалтгаан: ${reason}`);
+    const message = lines.join('\n').trim();
+    await notifyCourseStudents(rows.map((r) => r.course_id), title, message, 'schedule', actor.id, {
+      kind: 'class_cancelled',
+      schedule_id: target.id,
+      cancel_date: date,
+    });
+
+    // Сургалтын албанд мэдэгдэнэ (багш цуцалсан бол)
+    if (actor.role === 'teacher') {
+      const staff = await run(supabase.from('users').select('id').eq('role', 'academic').eq('is_active', true));
+      if (staff.length) {
+        await notifyUsers(
+          staff.map((u: any) => u.id),
+          'Багш хичээл цуцаллаа',
+          `${target.teacher_name ?? 'Багш'}\n${slotText(target, date)}${reason ? `\nШалтгаан: ${reason}` : ''}`,
+          'schedule',
+          actor.id,
+          { kind: 'class_cancelled', schedule_id: target.id, cancel_date: date },
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[class-cancel-notify]', (err as Error).message);
+  }
+}
+
+/** Цуцлагдсан хичээлүүдийн жагсаалт (Сургалтын алба — тайлан; багш/оюутан — өөрийнх) */
+export async function cancellations(q: z.infer<typeof cancellationsQuery>, actor: AuthUser) {
+  const today = localDate();
+  const from = q.from || addDays(today, -30);
+  const to = q.to || addDays(today, 30);
+  let query = supabase
+    .from('class_cancellations')
+    .select('id, cancel_date, reason, created_at, schedule_id, course_id, users(full_name), schedules(day_of_week, start_time, end_time, room, building, is_online), courses!inner(teacher_id, subjects(code, name), classes(code), employees(users(full_name)))')
+    .gte('cancel_date', from)
+    .lte('cancel_date', to)
+    .order('cancel_date', { ascending: false });
+  if (q.course_id) query = query.eq('course_id', q.course_id);
+
+  if (actor.role === 'teacher') query = query.eq('courses.teacher_id', actor.employeeId ?? NO_MATCH);
+  else if (actor.role === 'student') {
+    const rows = await run(supabase.from('enrollments').select('course_id').eq('student_id', actor.studentId ?? NO_MATCH).neq('status', 'dropped'));
+    query = query.in('course_id', rows.length ? rows.map((r: any) => r.course_id) : [NO_MATCH]);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    if (error.code === '42P01' || error.code === 'PGRST205') return [];
+    throw new HttpError(500, `Цуцлалтын жагсаалт уншиж чадсангүй: ${error.message}`);
+  }
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    schedule_id: r.schedule_id,
+    course_id: r.course_id,
+    cancel_date: r.cancel_date,
+    reason: r.reason,
+    created_at: r.created_at,
+    cancelled_by_name: r.users?.full_name ?? null,
+    day_of_week: r.schedules?.day_of_week ?? null,
+    start_time: hhmm(r.schedules?.start_time),
+    end_time: hhmm(r.schedules?.end_time),
+    room: r.schedules?.room ?? null,
+    building: r.schedules?.building ?? null,
+    is_online: !!r.schedules?.is_online,
+    subject_code: r.courses?.subjects?.code ?? null,
+    subject_name: r.courses?.subjects?.name ?? null,
+    class_name: r.courses?.classes?.code ?? null,
+    teacher_name: r.courses?.employees?.users?.full_name ?? null,
+  }));
 }
 
 async function courseInfo(courseId: string) {

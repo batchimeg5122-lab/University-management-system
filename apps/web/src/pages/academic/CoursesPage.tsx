@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { LayoutGrid, Plus } from 'lucide-react';
-import { Button, DataTable, Input, Modal, PageHeader, Panel, Select } from '@/components/ui';
+import { Button, DataTable, ExportButton, Input, Modal, PageHeader, Panel, Select } from '@/components/ui';
 import { CourseStatusBadge } from '@/components/ui/StatusBadge';
 import { useToast } from '@/components/ui/Toast';
 import { useClasses } from '@/features/classes/hooks';
@@ -13,6 +13,7 @@ import { useFormState } from '@/hooks/useFormState';
 import { useRole } from '@/hooks/useRole';
 import { errorMessage } from '@/lib/api';
 import { COURSE_STATUS_LABEL } from '@/lib/constants';
+import { exportExcel } from '@/lib/excel';
 import { shortName } from '@/lib/utils';
 import type { Course } from '@/types/models';
 
@@ -63,7 +64,26 @@ export default function CoursesPage() {
       <PageHeader
         title="Хичээл хуваарилалт"
         description="Хичээлийн сангаас улирал бүр ангид хичээл оноож, багш хуваарилна. Ангийн оюутнууд автоматаар бүртгэгдэнэ."
-        actions={can('courses') && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing('new')}>Хичээл хуваарилах</Button>}
+        actions={
+          <>
+            <ExportButton
+              disabled={!data?.length}
+              onExport={() =>
+                exportExcel('hicheel-huvaarilalt', 'Хичээл', [
+                  { header: 'Хичээлийн код', value: (r) => r.subject_code, width: 14 },
+                  { header: 'Хичээл', value: (r) => r.subject_name, width: 34 },
+                  { header: 'Кредит', value: (r) => r.credit },
+                  { header: 'Анги', value: (r) => r.class_name, width: 14 },
+                  { header: 'Багш', value: (r) => r.teacher_name, width: 26 },
+                  { header: 'Оюутан', value: (r) => r.student_count },
+                  { header: 'Улирал', value: (r) => r.semester_name, width: 20 },
+                  { header: 'Төлөв', value: (r) => COURSE_STATUS_LABEL[r.status] ?? r.status, width: 14 },
+                ], data ?? [])
+              }
+            />
+            {can('courses') && <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setEditing('new')}>Хичээл хуваарилах</Button>}
+          </>
+        }
       />
       <Panel flush>
         <div className="flex flex-col gap-2 border-b border-line px-4 py-3 sm:flex-row sm:items-center">

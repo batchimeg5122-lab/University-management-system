@@ -12,6 +12,9 @@ export const create = asyncHandler(async (req, res) => {
 });
 export const mine = asyncHandler(async (req, res) => ok(res, await service.mine(req.user!)));
 
+/** Төлбөр төлсөн баримт — оюутан өөрийнх, санхүү/удирдлага/сургалт бүгдийг */
+export const receipt = asyncHandler(async (req, res) => ok(res, await service.receipt(req.params.id, req.user!)));
+
 export const reconcilePreview = asyncHandler(async (req, res) => ok(res, await reconcile.preview(req.body)));
 export const bulkCreate = asyncHandler(async (req, res) => {
   const result = await reconcile.createBulk(req.body, req.user!);

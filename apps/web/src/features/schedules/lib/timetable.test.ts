@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { autoPlace } from './autoplace';
-import { findConflicts, overlaps } from './timetable';
+import { dowOf, findConflicts, isCancelledOn, nextDateOfWeekday, overlaps } from './timetable';
 
 const base = { course_id: 'c', class_id: 'A', teacher_id: 'T', day_of_week: 1, start_time: '08:00', end_time: '09:20', room: '101', building: 'I байр' };
 
@@ -43,4 +43,21 @@ describe('автомат байршуулалт', () => {
   });
   it('багтаамж хүрэхгүй бол байршуулахгүй', () => expect(r.unplaced.map((u) => u.course.id)).toEqual(['c4']));
   it('өрөөний багтаамжийг хүндэтгэнэ', () => expect(r.placed.find((p) => p.course.id === 'c3')?.room).toBe('201'));
+});
+
+describe('Хичээл цуцлах — огнооны тооцоо', () => {
+  // 2026-09-28 = Даваа
+  const mon = new Date(2026, 8, 28);
+
+  it('өнөөдрийн гараг = өнөөдөр', () => expect(nextDateOfWeekday(1, 0, mon)).toBe('2026-09-28'));
+  it('дараагийн гараг энэ долоо хоногт', () => expect(nextDateOfWeekday(4, 0, mon)).toBe('2026-10-01'));
+  it('өнгөрсөн гараг → дараа долоо хоног', () => expect(nextDateOfWeekday(7, 0, mon)).toBe('2026-10-04'));
+  it('weeksAhead 7 хоногоор нэмнэ', () => expect(nextDateOfWeekday(1, 2, mon)).toBe('2026-10-12'));
+  it('dowOf: Ням = 7', () => expect(dowOf(new Date(2026, 8, 27))).toBe(7));
+  it('isCancelledOn тухайн огноог л таньна', () => {
+    const s = { cancellations: [{ cancel_date: '2026-09-28' }] };
+    expect(isCancelledOn(s, '2026-09-28')).toBe(true);
+    expect(isCancelledOn(s, '2026-10-05')).toBe(false);
+    expect(isCancelledOn({}, '2026-09-28')).toBe(false);
+  });
 });

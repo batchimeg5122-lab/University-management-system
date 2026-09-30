@@ -1,7 +1,8 @@
 import { useNavigate } from 'react-router-dom';
-import { DataTable, PageHeader, Panel, ProgressBar } from '@/components/ui';
+import { DataTable, ExportButton, PageHeader, Panel, ProgressBar } from '@/components/ui';
 import { useSchoolReports } from '@/features/reports/hooks';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { exportExcel } from '@/lib/excel';
 import { percent } from '@/lib/utils';
 
 export default function SchoolStatsPage() {
@@ -12,7 +13,26 @@ export default function SchoolStatsPage() {
 
   return (
     <>
-      <PageHeader title="Сургуулиудын статистик" description="Мөр дээр дарж тухайн сургуулийн тэнхимүүдийг харна." />
+      <PageHeader
+        title="Сургуулиудын статистик"
+        description="Мөр дээр дарж тухайн сургуулийн тэнхимүүдийг харна."
+        actions={
+          <ExportButton
+            disabled={!data?.length}
+            onExport={() =>
+              exportExcel('surguuliin-statistik', 'Сургууль', [
+                { header: 'Сургууль', value: (r) => r.name, width: 34 },
+                { header: 'Оюутан', value: (r) => r.students },
+                { header: 'Багш', value: (r) => r.teachers },
+                { header: 'Анги', value: (r) => r.classes },
+                { header: 'Хөтөлбөр', value: (r) => r.programs },
+                { header: 'Голч дүн', value: (r) => (r.students ? Number(r.avg_gpa.toFixed(2)) : ''), width: 12 },
+                { header: 'Ирц (%)', value: (r) => (r.students ? Number(r.avg_attendance.toFixed(1)) : ''), width: 12 },
+              ], data ?? [])
+            }
+          />
+        }
+      />
       <Panel flush>
         <DataTable
           rows={data}

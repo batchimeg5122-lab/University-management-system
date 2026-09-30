@@ -36,7 +36,8 @@ export async function dashboard(actor: AuthUser) {
   const todaySessions = schedules
     .filter((s) => s.day_of_week === weekday)
     .map((s) => ({ ...s, attendance_taken: taken.has(s.course_id) }));
-  const attendancePending = new Set(todaySessions.filter((s) => !s.attendance_taken).map((s) => s.course_id)).size;
+  // Цуцлагдсан хичээлд ирц бүртгэх шаардлагагүй
+  const attendancePending = new Set(todaySessions.filter((s) => !s.attendance_taken && !s.cancelled_today).map((s) => s.course_id)).size;
 
   const byCourse = new Map<string, Set<string>>();
   (enrollments as { course_id: string; grade_status: string }[]).forEach((e) => {

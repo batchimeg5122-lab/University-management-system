@@ -87,6 +87,15 @@ export function dayLabelOf(iso: string): string {
   return DAY_LABEL[weekday(toDate(iso))] ?? '';
 }
 
+/**
+ * Тухайн гарагийн хамгийн дараагийн огноо (өнөөдөр орно).
+ * Жишээ: Өнөөдөр Лхагва бол Лхагвагийн (3) огноо = өнөөдөр, Даваа (1) = дараа долоо хоног.
+ */
+export function nextDateOfWeekday(dow: number, from = new Date()): string {
+  const diff = (dow - weekday(from) + 7) % 7;
+  return addDays(isoDate(from), diff);
+}
+
 /** "Бат Дорж" → "БД" */
 export function initials(name: string | null | undefined): string {
   if (!name) return '?';

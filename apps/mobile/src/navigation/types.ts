@@ -46,6 +46,7 @@ export type AppStackParamList = {
   GradeEntry: { courseId: string; title?: string };
   TeacherMaterials: { courseId: string; title?: string };
   Statistics: { courseId?: string; title?: string } | undefined;
+  Workload: undefined;
 };
 
 export type AuthScreenProps<T extends keyof AuthStackParamList> = NativeStackScreenProps<AuthStackParamList, T>;

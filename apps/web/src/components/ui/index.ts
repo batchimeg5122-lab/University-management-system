@@ -18,5 +18,6 @@ export * from './StatusBadge';
 export * from './Tabs';
 export * from './Toast';
 export * from './ExportButton';
+export * from './SheetPdfButton';
 export * from './MultiPicker';
 export * from './Charts';

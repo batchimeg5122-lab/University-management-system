@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown, ClipboardCheck } from 'lucide-react';
-import { Button, EmptyState, ErrorState, Modal, PageHeader, PageLoader, Panel, Textarea } from '@/components/ui';
+import { Button, EmptyState, ErrorState, ExportButton, Modal, PageHeader, PageLoader, Panel, Textarea } from '@/components/ui';
 import { GradeDistributionChart } from '@/components/charts/GradeDistributionChart';
 import { useToast } from '@/components/ui/Toast';
 import { usePendingGrades, useReviewGrades } from '@/features/grades/hooks';
@@ -8,8 +8,26 @@ import type { PendingGradeGroup } from '@/features/grades/api';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useRole } from '@/hooks/useRole';
 import { errorMessage } from '@/lib/api';
+import { exportExcel } from '@/lib/excel';
 import { letterBucket } from '@/lib/gpa';
 import { cn, formatDateTime, shortName } from '@/lib/utils';
+
+/** Хичээлээр бүлэглэсэн дүнг Excel-д тохирох нэг хүснэгт болгоно */
+function flatPending(groups: PendingGradeGroup[]) {
+  return groups.flatMap((g) =>
+    g.rows.map((r) => ({
+      subject_name: g.course.subject_name ?? null,
+      class_name: g.course.class_name ?? null,
+      teacher_name: g.course.teacher_name ?? null,
+      submitted_at: g.submitted_at ? formatDateTime(g.submitted_at) : null,
+      student_code: r.student_code ?? null,
+      student_name: r.student_name ?? null,
+      total_score: r.total_score,
+      letter_grade: r.letter_grade,
+      gpa_point: r.gpa_point,
+    })),
+  );
+}
 
 function distributionOf(g: PendingGradeGroup) {
   const d = { A: 0, B: 0, C: 0, D: 0, F: 0 };
@@ -49,7 +67,30 @@ export default function GradeApprovalPage() {
 
   return (
     <>
-      <PageHeader title="Дүн баталгаажуулалт" description="Багш нарын илгээсэн дүнг хянаж баталгаажуулна. Баталгаажсаны дараа оюутанд харагдаж, голч дүн дахин бодогдоно." />
+      <PageHeader
+        title="Дүн баталгаажуулалт"
+        description="Багш нарын илгээсэн дүнг хянаж баталгаажуулна. Баталгаажсаны дараа оюутанд харагдаж, голч дүн дахин бодогдоно."
+        actions={
+          <ExportButton
+            label="Илгээсэн дүн"
+            disabled={!data?.length}
+            onExport={() =>
+              // Хичээл × оюутны нэг хүснэгт — хянахад бэлэн
+              exportExcel('ilgeesen-dun', 'Илгээсэн дүн', [
+                { header: 'Хичээл', value: (r) => r.subject_name, width: 32 },
+                { header: 'Анги', value: (r) => r.class_name, width: 14 },
+                { header: 'Багш', value: (r) => r.teacher_name, width: 26 },
+                { header: 'Илгээсэн', value: (r) => r.submitted_at, width: 18 },
+                { header: 'Оюутны код', value: (r) => r.student_code, width: 14 },
+                { header: 'Оюутан', value: (r) => r.student_name, width: 28 },
+                { header: 'Нийт оноо', value: (r) => r.total_score },
+                { header: 'Үнэлгээ', value: (r) => r.letter_grade },
+                { header: 'Голч (4.0)', value: (r) => r.gpa_point },
+              ], flatPending(data ?? []))
+            }
+          />
+        }
+      />
 
       {isLoading ? (
         <PageLoader />

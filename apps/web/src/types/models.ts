@@ -218,6 +218,35 @@ export interface Schedule extends ScheduleRecord {
   subject_name?: string;
   teacher_name?: string | null;
   class_name?: string | null;
+  /** Ойрын хугацаанд цуцлагдсан өдрүүд */
+  cancellations?: ClassCancellation[];
+  /** Өнөөдрийн хичээл цуцлагдсан эсэх */
+  cancelled_today?: boolean;
+}
+
+/** Багш тухайн өдрийн хичээлээ цуцалсан бичлэг */
+export interface ClassCancellation {
+  cancel_date: string;
+  reason: string | null;
+}
+
+/** Цуцлагдсан хичээлийн дэлгэрэнгүй */
+export interface ClassCancellationRow extends ClassCancellation {
+  id: string;
+  schedule_id: string;
+  course_id: string;
+  created_at: string;
+  cancelled_by_name: string | null;
+  day_of_week: number | null;
+  start_time: string;
+  end_time: string;
+  room: string | null;
+  building: string | null;
+  is_online: boolean;
+  subject_code: string | null;
+  subject_name: string | null;
+  class_name: string | null;
+  teacher_name: string | null;
 }
 
 export interface ScheduleConflict {
@@ -264,6 +293,8 @@ export interface Payment {
   transaction_reference: string | null;
   payment_date: string;
   description: string | null;
+  /** Төлбөр төлсөн баримтын дугаар — RCP-YYYY-00001 */
+  receipt_no?: string | null;
   invoice_number?: string;
   student_name?: string;
   student_code?: string;

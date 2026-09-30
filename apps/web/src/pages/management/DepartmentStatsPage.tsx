@@ -1,8 +1,9 @@
 import { useSearchParams } from 'react-router-dom';
-import { DataTable, PageHeader, Panel, Select } from '@/components/ui';
+import { DataTable, ExportButton, PageHeader, Panel, Select } from '@/components/ui';
 import { useDepartments } from '@/features/departments/hooks';
 import { useDepartmentReports } from '@/features/reports/hooks';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { exportExcel } from '@/lib/excel';
 import { percent } from '@/lib/utils';
 
 export default function DepartmentStatsPage() {
@@ -18,7 +19,23 @@ export default function DepartmentStatsPage() {
         title="Тэнхимүүдийн статистик"
         back={school ? { to: '/management/schools', label: 'Сургуулиуд' } : undefined}
         actions={
-          <Select className="w-72" value={school} onChange={(e) => setParams(e.target.value ? { school: e.target.value } : {})} placeholder="Бүх сургууль" options={(schools ?? []).map((s) => ({ value: s.id, label: s.name }))} />
+          <>
+            <ExportButton
+              disabled={!data?.length}
+              onExport={() =>
+                exportExcel('tenhimiin-statistik', 'Тэнхим', [
+                  { header: 'Тэнхим', value: (r) => r.name, width: 34 },
+                  { header: 'Оюутан', value: (r) => r.students },
+                  { header: 'Багш', value: (r) => r.teachers },
+                  { header: 'Хичээл', value: (r) => r.subjects },
+                  { header: 'Анги', value: (r) => r.classes },
+                  { header: 'Голч дүн', value: (r) => (r.students ? Number(r.avg_gpa.toFixed(2)) : ''), width: 12 },
+                  { header: 'Ирц (%)', value: (r) => (r.students ? Number(r.avg_attendance.toFixed(1)) : ''), width: 12 },
+                ], data ?? [])
+              }
+            />
+            <Select className="w-72" value={school} onChange={(e) => setParams(e.target.value ? { school: e.target.value } : {})} placeholder="Бүх сургууль" options={(schools ?? []).map((s) => ({ value: s.id, label: s.name }))} />
+          </>
         }
       />
       <Panel flush>

@@ -11,6 +11,7 @@ import { TeacherCourseDetailScreen } from '../screens/teacher/TeacherCourseDetai
 import { TeacherCoursesScreen } from '../screens/teacher/TeacherCoursesScreen';
 import { TeacherHomeScreen } from '../screens/teacher/TeacherHomeScreen';
 import { TeacherMaterialsScreen } from '../screens/teacher/TeacherMaterialsScreen';
+import { WorkloadScreen } from '../screens/teacher/WorkloadScreen';
 import { useTheme } from '../theme';
 import { MainTabs } from './MainTabs';
 import { stackOptions } from './options';
@@ -34,6 +35,7 @@ export function TeacherNavigator() {
       <Stack.Screen name="GradeEntry" component={GradeEntryScreen} options={{ title: 'Дүн оруулах' }} />
       <Stack.Screen name="TeacherMaterials" component={TeacherMaterialsScreen} options={{ title: 'Материал' }} />
       <Stack.Screen name="Statistics" component={StatisticsScreen} options={({ route }) => ({ title: route.params?.title ?? 'Статистик' })} />
+      <Stack.Screen name="Workload" component={WorkloadScreen} options={{ title: 'Хичээлийн цаг' }} />
       <Stack.Screen name="Exams" component={ExamsScreen} options={{ title: 'Шалгалтын хуваарь' }} />
       <Stack.Screen name="Calendar" component={CalendarScreen} options={{ title: 'Академик календарь' }} />
       <Stack.Screen name="Announcements" component={AnnouncementsScreen} options={{ title: 'Зарлал' }} />

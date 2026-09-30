@@ -1,5 +1,5 @@
 import { del, get, patch, post } from '@/lib/api';
-import type { Schedule, ScheduleConflict } from '@/types/models';
+import type { ClassCancellationRow, Schedule, ScheduleConflict } from '@/types/models';
 import type { SessionType } from './lib/timetable';
 
 export type ScheduleFilters = {
@@ -41,4 +41,20 @@ export const schedulesApi = {
   create: (body: ScheduleInput) => post<ScheduleResult>('/schedules', body),
   update: (id: string, body: Partial<Omit<ScheduleInput, 'course_ids'>> & { course_id?: string }) => patch<ScheduleResult>(`/schedules/${id}`, body),
   remove: (id: string, withGroup = false) => del<{ deleted: boolean; count: number }>(`/schedules/${id}${withGroup ? '?group=true' : ''}`),
+
+  /** Тухайн өдрийн хичээлийг цуцлах — оюутнуудад мэдэгдэл автоматаар илгээгдэнэ */
+  cancelClass: (id: string, body: { date: string; reason?: string | null }) => post<CancelClassResult>(`/schedules/${id}/cancel`, body),
+  /** Цуцлалтыг буцаах */
+  restoreClass: (id: string, date: string) => del<CancelClassResult>(`/schedules/${id}/cancel?date=${encodeURIComponent(date)}`),
+  /** Цуцлагдсан хичээлүүдийн жагсаалт */
+  cancellations: (params: { from?: string; to?: string; course_id?: string } = {}) => get<ClassCancellationRow[]>('/schedules/cancellations', params),
 };
+
+export interface CancelClassResult {
+  cancelled?: boolean;
+  restored?: boolean;
+  cancel_date: string;
+  reason?: string | null;
+  schedule_ids: string[];
+  schedules: Schedule[];
+}

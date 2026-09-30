@@ -1,13 +1,33 @@
 import { useState } from 'react';
 import { BarList } from '@/components/charts/BarList';
 import { SegmentBar } from '@/components/charts/SegmentBar';
-import { ErrorState, PageHeader, PageLoader, Panel, Select, StatStrip } from '@/components/ui';
+import { ErrorState, ExportButton, PageHeader, PageLoader, Panel, Select, StatStrip } from '@/components/ui';
 import { useFinanceReport } from '@/features/finance/hooks';
 import { useCurrentSemester, useSemesters } from '@/features/semesters/hooks';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { exportExcel } from '@/lib/excel';
 import { INVOICE_STATUS_LABEL, PAYMENT_METHOD_LABEL } from '@/lib/constants';
 import { formatMoney, percent } from '@/lib/utils';
 import type { PaymentMethod } from '@/types/models';
+import type { FinanceReport } from '@/types/reports';
+
+/** Тайланг Excel-д тохирох мөр болгон хөрвүүлнэ */
+function reportRows(data: FinanceReport | undefined) {
+  if (!data) return [];
+  const rows: { section: string; label: string; value: number }[] = [
+    { section: 'Нийт', label: 'Нэхэмжилсэн', value: data.total_billed },
+    { section: 'Нийт', label: 'Хөнгөлөлт', value: data.total_discount },
+    { section: 'Нийт', label: 'Орсон төлбөр', value: data.total_paid },
+    { section: 'Нийт', label: 'Авлага', value: data.total_outstanding },
+  ];
+  Object.entries(data.by_status).forEach(([k, v]) => rows.push({ section: 'Нэхэмжлэлийн төлөв', label: INVOICE_STATUS_LABEL[k as keyof typeof INVOICE_STATUS_LABEL] ?? k, value: v }));
+  Object.entries(data.by_method).forEach(([k, v]) => rows.push({ section: 'Төлбөрийн хэлбэр', label: PAYMENT_METHOD_LABEL[k as PaymentMethod] ?? k, value: v }));
+  data.by_school.forEach((s) => {
+    rows.push({ section: 'Сургуулиар — нэхэмжилсэн', label: s.name, value: s.billed });
+    rows.push({ section: 'Сургуулиар — төлсөн', label: s.name, value: s.paid });
+  });
+  return rows;
+}
 
 export default function FinanceReportsPage() {
   useDocumentTitle('Санхүүгийн тайлан');
@@ -22,7 +42,23 @@ export default function FinanceReportsPage() {
       <PageHeader
         title="Санхүүгийн тайлан"
         description="Улирлын төлбөрийн орлого, авлагыг сургууль болон төлбөрийн хэлбэрээр."
-        actions={<Select className="w-60" value={active ?? ''} onChange={(e) => setSemesterId(e.target.value)} options={(semesters ?? []).map((s) => ({ value: s.id, label: `${s.academic_year} ${s.name}` }))} />}
+        actions={
+          <>
+            <ExportButton
+              label="Тайлан"
+              disabled={!data}
+              onExport={() =>
+                // Нэг хуудсанд: нийт үзүүлэлт, төлөв, хэлбэр, сургуулиар
+                exportExcel('sanhuugiin-tailan', 'Санхүүгийн тайлан', [
+                  { header: 'Хэсэг', value: (r) => r.section, width: 22 },
+                  { header: 'Үзүүлэлт', value: (r) => r.label, width: 30 },
+                  { header: 'Дүн', value: (r) => r.value, width: 18 },
+                ], reportRows(data))
+              }
+            />
+            <Select className="w-60" value={active ?? ''} onChange={(e) => setSemesterId(e.target.value)} options={(semesters ?? []).map((s) => ({ value: s.id, label: `${s.academic_year} ${s.name}` }))} />
+          </>
+        }
       />
       {isLoading ? <PageLoader /> : error || !data ? <ErrorState error={error} onRetry={refetch} /> : (
         <>

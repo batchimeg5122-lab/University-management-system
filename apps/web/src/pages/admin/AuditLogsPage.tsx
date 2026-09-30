@@ -66,9 +66,11 @@ export const ACTION_LABEL: Record<string, string> = {
   NOTIFY_ADVISORS: 'Зөвлөх багшид эрсдэл мэдэгдсэн',
   SEND_WEEKLY_REPORT: 'Долоо хоногийн тайлан илгээсэн',
   UPDATE_SETTINGS: 'Системийн тохиргоо өөрчилсөн',
+  CANCEL_CLASS: 'Тухайн өдрийн хичээл цуцалсан',
+  RESTORE_CLASS: 'Хичээлийн цуцлалтыг буцаасан',
 };
 
-const TABLES = ['system_settings', 'academic_events', 'discount_rules', 'broadcasts', 'exams', 'users', 'students', 'employees', 'courses', 'schedules', 'attendance', 'enrollments', 'invoices', 'payments', 'notifications', 'course_materials'];
+const TABLES = ['system_settings', 'academic_events', 'discount_rules', 'broadcasts', 'exams', 'users', 'students', 'employees', 'courses', 'schedules', 'class_cancellations', 'attendance', 'enrollments', 'invoices', 'payments', 'notifications', 'course_materials'];
 
 export default function AuditLogsPage() {
   useDocumentTitle('Үйлдлийн түүх');

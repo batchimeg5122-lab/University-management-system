@@ -1,15 +1,21 @@
-import { DataTable, ErrorState, PageHeader, PageLoader, Panel, ProgressBar } from '@/components/ui';
+import { useState } from 'react';
+import { Receipt } from 'lucide-react';
+import { Button, DataTable, ErrorState, ExportButton, PageHeader, PageLoader, Panel, ProgressBar } from '@/components/ui';
 import { InvoiceStatusBadge } from '@/components/ui/StatusBadge';
+import { ReceiptModal } from '@/features/finance/components/ReceiptModal';
 import { useMyInvoices, useMyPayments } from '@/features/finance/hooks';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { PAYMENT_METHOD_LABEL } from '@/lib/constants';
-import { formatDate, formatMoney } from '@/lib/utils';
+import { exportExcel } from '@/lib/excel';
+import { formatDate, formatDateTime, formatMoney } from '@/lib/utils';
 
 export default function MyFinancePage() {
   useDocumentTitle('Төлбөр');
   const invoices = useMyInvoices();
   const payments = useMyPayments();
   const current = invoices.data?.[0];
+  /** Төлбөр төлсөн баримт харах — сонгосон төлөлт */
+  const [receiptId, setReceiptId] = useState<string | null>(null);
 
   if (invoices.error) return <ErrorState error={invoices.error} onRetry={invoices.refetch} />;
 
@@ -17,7 +23,26 @@ export default function MyFinancePage() {
 
   return (
     <>
-      <PageHeader title="Сургалтын төлбөр" description="Нэхэмжлэл, хөнгөлөлт болон төлөлтийн түүх." />
+      <PageHeader
+        title="Сургалтын төлбөр"
+        description="Нэхэмжлэл, хөнгөлөлт болон төлөлтийн түүх. Төлөлт бүрийн баримтыг PDF болгон татаж авна."
+        actions={
+          <ExportButton
+            label="Төлөлтийн түүх"
+            disabled={!payments.data?.length}
+            onExport={() =>
+              exportExcel('miniy-tololt', 'Төлөлт', [
+                { header: 'Огноо', value: (r) => formatDateTime(r.payment_date), width: 18 },
+                { header: 'Баримтын дугаар', value: (r) => r.receipt_no, width: 18 },
+                { header: 'Нэхэмжлэл', value: (r) => r.invoice_number, width: 18 },
+                { header: 'Дүн', value: (r) => Number(r.amount) },
+                { header: 'Хэлбэр', value: (r) => PAYMENT_METHOD_LABEL[r.method] },
+                { header: 'Гүйлгээний дугаар', value: (r) => r.transaction_reference, width: 22 },
+              ], payments.data ?? [])
+            }
+          />
+        }
+      />
 
       {invoices.isLoading ? (
         <PageLoader />
@@ -80,6 +105,16 @@ export default function MyFinancePage() {
               { key: 'date', header: 'Огноо', cell: (r) => <span className="num">{formatDate(r.payment_date)}</span> },
               { key: 'method', header: 'Хэлбэр', cell: (r) => <span className="text-muted">{PAYMENT_METHOD_LABEL[r.method]}</span> },
               { key: 'amount', header: 'Дүн', align: 'right', cell: (r) => <span className="num font-medium">{formatMoney(r.amount)}</span> },
+              {
+                key: 'receipt',
+                header: 'Баримт',
+                align: 'right',
+                cell: (r) => (
+                  <Button size="sm" variant="ghost" icon={<Receipt className="h-3.5 w-3.5" />} onClick={() => setReceiptId(r.id)} title="Төлбөр төлсөн баримт">
+                    Баримт
+                  </Button>
+                ),
+              },
             ]}
           />
         </Panel>
@@ -96,6 +131,7 @@ export default function MyFinancePage() {
           />
         </Panel>
       </div>
+      <ReceiptModal paymentId={receiptId} onClose={() => setReceiptId(null)} />
     </>
   );
 }

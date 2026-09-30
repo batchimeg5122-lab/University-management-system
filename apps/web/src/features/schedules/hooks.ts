@@ -40,3 +40,31 @@ export function useDeleteSchedule() {
   const done = useInvalidate();
   return useMutation({ mutationFn: ({ id, withGroup }: { id: string; withGroup?: boolean }) => schedulesApi.remove(id, withGroup), onSuccess: done });
 }
+
+/** Цуцлагдсан хичээлүүд */
+export const useClassCancellations = (params: { from?: string; to?: string; course_id?: string } = {}, enabled = true) =>
+  useQuery({ queryKey: ['schedules', 'cancellations', params], queryFn: () => schedulesApi.cancellations(params), enabled });
+
+function useCancelInvalidate() {
+  const qc = useQueryClient();
+  return () => {
+    qc.invalidateQueries({ queryKey: ['schedules'] });
+    qc.invalidateQueries({ queryKey: ['notifications'] });
+    qc.invalidateQueries({ queryKey: ['teacher'] });
+  };
+}
+
+/** Багш тухайн өдрийн хичээлээ цуцлах */
+export function useCancelClass() {
+  const done = useCancelInvalidate();
+  return useMutation({
+    mutationFn: ({ id, date, reason }: { id: string; date: string; reason?: string | null }) => schedulesApi.cancelClass(id, { date, reason }),
+    onSuccess: done,
+  });
+}
+
+/** Цуцлалтыг буцаах */
+export function useRestoreClass() {
+  const done = useCancelInvalidate();
+  return useMutation({ mutationFn: ({ id, date }: { id: string; date: string }) => schedulesApi.restoreClass(id, date), onSuccess: done });
+}

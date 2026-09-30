@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { CreditCard } from 'lucide-react';
-import { DataTable, ExportButton, PageHeader, Panel, SearchInput, Select } from '@/components/ui';
+import { CreditCard, Receipt } from 'lucide-react';
+import { Button, DataTable, ExportButton, PageHeader, Panel, SearchInput, Select } from '@/components/ui';
 import { exportExcel } from '@/lib/excel';
+import { ReceiptModal } from '@/features/finance/components/ReceiptModal';
 import { usePayments } from '@/features/finance/hooks';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { PAYMENT_METHOD_LABEL } from '@/lib/constants';
@@ -12,6 +13,8 @@ export default function PaymentsPage() {
   const [filters, setFilters] = useState({ q: '', method: '' });
   const { data, isLoading, error, refetch } = usePayments(filters);
   const total = data?.reduce((s, p) => s + p.amount, 0) ?? 0;
+  /** Баримт харах/татах — сонгосон төлөлт */
+  const [receiptId, setReceiptId] = useState<string | null>(null);
 
   return (
     <>
@@ -30,6 +33,7 @@ export default function PaymentsPage() {
                 { header: 'Дүн', value: (r) => Number(r.amount) },
                 { header: 'Хэлбэр', value: (r) => PAYMENT_METHOD_LABEL[r.method] },
                 { header: 'Гүйлгээний дугаар', value: (r) => r.transaction_reference, width: 22 },
+                { header: 'Баримтын дугаар', value: (r) => r.receipt_no, width: 18 },
                 { header: 'Тайлбар', value: (r) => r.description, width: 30 },
               ], data ?? [])
             }
@@ -58,9 +62,20 @@ export default function PaymentsPage() {
             { key: 'method', header: 'Хэлбэр', cell: (r) => PAYMENT_METHOD_LABEL[r.method] },
             { key: 'ref', header: 'Гүйлгээ', hideOnMobile: true, cell: (r) => <span className="num text-muted">{r.transaction_reference ?? '—'}</span> },
             { key: 'amount', header: 'Дүн', align: 'right', cell: (r) => <span className="num font-semibold">{formatMoney(r.amount)}</span> },
+            {
+              key: 'receipt',
+              header: 'Баримт',
+              align: 'right',
+              cell: (r) => (
+                <Button size="sm" icon={<Receipt className="h-3.5 w-3.5" />} onClick={() => setReceiptId(r.id)} title="Төлбөр төлсөн баримт харах, татах">
+                  Баримт
+                </Button>
+              ),
+            },
           ]}
         />
       </Panel>
+      <ReceiptModal paymentId={receiptId} onClose={() => setReceiptId(null)} />
     </>
   );
 }

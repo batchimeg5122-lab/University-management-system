@@ -4,6 +4,7 @@ import { Button, EmptyState, ErrorState, PageHeader, PageLoader, Panel, Segmente
 import { useClasses } from '@/features/classes/hooks';
 import { useCourses } from '@/features/courses/hooks';
 import { useTeachers } from '@/features/employees/hooks';
+import { CancelledClassesPanel } from '@/features/schedules/components/CancelledClassesPanel';
 import { ScheduleFormModal, type ScheduleDraft } from '@/features/schedules/components/ScheduleFormModal';
 import { TimetableGrid, type TimetableView } from '@/features/schedules/components/TimetableGrid';
 import { useSchedules } from '@/features/schedules/hooks';
@@ -170,6 +171,8 @@ export default function SchedulesPage() {
           </div>
         )}
       </Panel>
+
+      <CancelledClassesPanel />
 
       {view === 'all' && unscheduled.length > 0 && (
         <Panel className="mt-4" title="Хуваарь гараагүй хичээлүүд" description="Эдгээр хичээлийн цагийг гаргаагүй байна." bodyClassName="px-5 py-3">

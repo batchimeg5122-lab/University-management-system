@@ -7,6 +7,8 @@ import { bulkPaymentsSchema, createPaymentSchema, listPaymentsQuery, reconcilePr
 export const paymentsRoutes = Router();
 
 paymentsRoutes.get('/payments/me', requireRole('student'), c.mine);
+// Төлбөр төлсөн баримт — оюутан зөвхөн өөрийнхөө (service шалгана)
+paymentsRoutes.get('/payments/:id/receipt', requireRole('student', 'finance', 'academic', 'management'), c.receipt);
 paymentsRoutes.get('/payments', requireRole('finance', 'management'), validate({ query: listPaymentsQuery }), c.list);
 paymentsRoutes.post('/payments', requireRole('finance'), validate({ body: createPaymentSchema }), c.create);
 

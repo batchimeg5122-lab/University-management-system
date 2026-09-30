@@ -32,6 +32,34 @@ export function slotOf(start: string): TimeSlot | undefined {
   return TIME_SLOTS.find((s) => s.start === hhmm(start));
 }
 
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** Браузерын локал огноо YYYY-MM-DD */
+export function todayIso(d = new Date()): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** 1 = Даваа ... 7 = Ням */
+export function dowOf(d = new Date()): number {
+  const w = d.getDay();
+  return w === 0 ? 7 : w;
+}
+
+/**
+ * Тухайн гарагийн хамгийн дараагийн огноо (өнөөдөр орно).
+ * `weeksAhead`-аар дараагийн долоо хоногуудыг авна.
+ */
+export function nextDateOfWeekday(dow: number, weeksAhead = 0, from = new Date()): string {
+  const diff = ((dow - dowOf(from) + 7) % 7) + weeksAhead * 7;
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() + diff);
+  return todayIso(d);
+}
+
+/** Хуваарийн мөр тухайн өдөр цуцлагдсан эсэх */
+export function isCancelledOn(s: { cancellations?: { cancel_date: string }[] }, date: string): boolean {
+  return (s.cancellations ?? []).some((c) => c.cancel_date === date);
+}
+
 export type SessionType = 'lecture' | 'seminar' | 'lab' | 'exam';
 
 export const SESSION_TYPE_LABEL: Record<SessionType, string> = {

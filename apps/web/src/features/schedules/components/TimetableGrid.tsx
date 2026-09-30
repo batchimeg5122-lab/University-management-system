@@ -3,7 +3,7 @@ import { MapPin, Plus, Video } from 'lucide-react';
 import { DAY_LABEL } from '@/lib/constants';
 import { cn, shortName } from '@/lib/utils';
 import type { Schedule } from '@/types/models';
-import { SESSION_TYPE_LABEL, TIME_SLOTS, WEEK_DAYS, hhmm, toMin, type SessionType } from '../lib/timetable';
+import { SESSION_TYPE_LABEL, TIME_SLOTS, WEEK_DAYS, hhmm, nextDateOfWeekday, toMin, todayIso, type SessionType } from '../lib/timetable';
 import { todayDow } from './WeekSchedule';
 
 export type TimetableView = 'all' | 'class' | 'teacher' | 'room';
@@ -17,13 +17,15 @@ function slotIndexFor(start: string) {
   return inside >= 0 ? inside : m < toMin(TIME_SLOTS[0].start) ? 0 : TIME_SLOTS.length - 1;
 }
 
-function Entry({ s, view, conflicted, groupClasses, onClick }: {
+function Entry({ s, view, conflicted, groupClasses, onClick, cancelledOn }: {
   s: Schedule;
   view: TimetableView;
   conflicted: boolean;
   /** Нэгдсэн лекцийн бусад ангиуд */
   groupClasses?: string[];
   onClick?: () => void;
+  /** Тухайн гарагийн ойрын хичээл цуцлагдсан огноо (байвал) */
+  cancelledOn?: string | null;
 }) {
   const offSlot = TIME_SLOTS.every((t) => t.start !== hhmm(s.start_time));
   const type = (s.session_type ?? 'lecture') as SessionType;
@@ -40,8 +42,13 @@ function Entry({ s, view, conflicted, groupClasses, onClick }: {
 
   const body = (
     <>
-      <span className="line-clamp-2 text-[12.5px] font-medium leading-snug text-ink">{s.subject_name}</span>
+      <span className={cn('line-clamp-2 text-[12.5px] font-medium leading-snug', cancelledOn ? 'text-muted line-through' : 'text-ink')}>{s.subject_name}</span>
       <span className="mt-0.5 flex flex-wrap items-center gap-1">
+        {cancelledOn && (
+          <span className="rounded-[4px] bg-danger-soft px-1.5 py-px text-[10.5px] font-medium text-danger">
+            {cancelledOn === todayIso() ? 'Өнөөдөр цуцлагдсан' : `${cancelledOn.slice(5)} цуцлагдсан`}
+          </span>
+        )}
         {type !== 'lecture' && (
           <span className="rounded-[4px] bg-ink/[0.06] px-1.5 py-px text-[10.5px] font-medium text-ink-soft">{SESSION_TYPE_LABEL[type]}</span>
         )}
@@ -67,12 +74,12 @@ function Entry({ s, view, conflicted, groupClasses, onClick }: {
 
   const cls = cn(
     'flex w-full flex-col items-start rounded-md border px-2 py-1.5 text-left transition-colors',
-    conflicted ? 'border-danger/40 bg-danger-soft' : 'border-line bg-white',
+    conflicted ? 'border-danger/40 bg-danger-soft' : cancelledOn ? 'border-danger/30 bg-danger-soft/40' : 'border-line bg-white',
     onClick && (conflicted ? 'hover:border-danger' : 'hover:border-accent/50 hover:bg-accent-soft/40'),
   );
 
   return onClick ? (
-    <button type="button" onClick={onClick} className={cls} title={conflicted ? 'Давхцалтай цаг' : 'Засах'}>
+    <button type="button" onClick={onClick} className={cls} title={conflicted ? 'Давхцалтай цаг' : cancelledOn ? 'Цуцлалтын дэлгэрэнгүй' : 'Засах'}>
       {body}
     </button>
   ) : (
@@ -167,16 +174,21 @@ export function TimetableGrid({
                 return (
                   <td key={d} className={cn('group border-b border-l border-line p-1 align-top', d === today && 'bg-accent-soft/25')}>
                     <div className="flex min-h-[64px] flex-col gap-1">
-                      {list.map((s) => (
-                        <Entry
-                          key={s.id}
-                          s={s}
-                          view={view}
-                          conflicted={!!conflictIds?.has(s.id)}
-                          groupClasses={s.group_id ? groupClasses.get(s.group_id) : undefined}
-                          onClick={onEntryClick ? () => onEntryClick(s) : undefined}
-                        />
-                      ))}
+                      {list.map((s) => {
+                        const nextDate = nextDateOfWeekday(s.day_of_week);
+                        const cancelledOn = (s.cancellations ?? []).find((c) => c.cancel_date === nextDate)?.cancel_date ?? null;
+                        return (
+                          <Entry
+                            key={s.id}
+                            s={s}
+                            view={view}
+                            conflicted={!!conflictIds?.has(s.id)}
+                            cancelledOn={cancelledOn}
+                            groupClasses={s.group_id ? groupClasses.get(s.group_id) : undefined}
+                            onClick={onEntryClick ? () => onEntryClick(s) : undefined}
+                          />
+                        );
+                      })}
                       {onEmptyClick && (view !== 'all' ? list.length === 0 : true) && (
                         <button
                           type="button"

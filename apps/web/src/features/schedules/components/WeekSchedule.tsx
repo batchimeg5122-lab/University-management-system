@@ -3,19 +3,28 @@ import { MapPin } from 'lucide-react';
 import { DAY_LABEL } from '@/lib/constants';
 import { cn, hhmm, shortName } from '@/lib/utils';
 import type { Schedule } from '@/types/models';
+import { nextDateOfWeekday, todayIso as todayIsoLocal } from '../lib/timetable';
 
 export const todayDow = () => {
   const d = new Date().getDay();
   return d === 0 ? 7 : d;
 };
 
-function Block({ s, show, action }: { s: Schedule; show: 'teacher' | 'class' | 'both'; action?: ReactNode }) {
+function Block({ s, show, action, forDate }: { s: Schedule; show: 'teacher' | 'class' | 'both'; action?: ReactNode; forDate?: string }) {
+  const cancel = forDate ? (s.cancellations ?? []).find((c) => c.cancel_date === forDate) : undefined;
+  const cancelled = !!cancel || (!forDate && !!s.cancelled_today);
   return (
-    <div className="group relative rounded-field border border-line bg-white px-3 py-2.5">
-      <p className="num text-xs text-muted">
+    <div className={cn('group relative rounded-field border px-3 py-2.5', cancelled ? 'border-danger/30 bg-danger-soft/40' : 'border-line bg-white')}>
+      <p className={cn('num text-xs', cancelled ? 'text-danger line-through' : 'text-muted')}>
         {hhmm(s.start_time)}–{hhmm(s.end_time)}
       </p>
-      <p className="mt-0.5 text-[13px] font-medium leading-snug text-ink">{s.subject_name}</p>
+      <p className={cn('mt-0.5 text-[13px] font-medium leading-snug', cancelled ? 'text-muted line-through' : 'text-ink')}>{s.subject_name}</p>
+      {cancelled && (
+        <p className="mt-1 text-xs font-medium text-danger">
+          {forDate === todayIsoLocal() || (!forDate && s.cancelled_today) ? 'Өнөөдрийн хичээл цуцлагдлаа' : `${forDate} — цуцлагдсан`}
+          {cancel?.reason ? ` · ${cancel.reason}` : ''}
+        </p>
+      )}
       <div className="mt-1.5 flex flex-col gap-0.5 text-xs text-muted">
         {(show === 'teacher' || show === 'both') && <span>{shortName(s.teacher_name)}</span>}
         {(show === 'class' || show === 'both') && <span>{s.class_name}</span>}
@@ -54,7 +63,7 @@ export function WeekSchedule({ rows, show = 'both', renderAction }: {
             </p>
             <div className="flex flex-col gap-2">
               {items.length ? (
-                items.map((s) => <Block key={s.id} s={s} show={show} action={renderAction?.(s)} />)
+                items.map((s) => <Block key={s.id} s={s} show={show} action={renderAction?.(s)} forDate={nextDateOfWeekday(d)} />)
               ) : (
                 <p className="px-1 py-3 text-xs text-faint">Хичээлгүй</p>
               )}
@@ -79,18 +88,20 @@ export function TodaySchedule({ rows, show = 'teacher' }: { rows: Schedule[]; sh
       {items.map((s) => {
         const done = toMin(s.end_time) < nowMin;
         const live = toMin(s.start_time) <= nowMin && nowMin <= toMin(s.end_time);
+        const cancelled = !!s.cancelled_today;
         return (
           <li key={s.id} className="flex gap-4 border-b border-line py-3 last:border-0">
             <div className="num w-12 shrink-0 text-right">
-              <p className={cn('text-sm font-medium', done ? 'text-faint' : 'text-ink')}>{hhmm(s.start_time)}</p>
+              <p className={cn('text-sm font-medium', cancelled ? 'text-danger line-through' : done ? 'text-faint' : 'text-ink')}>{hhmm(s.start_time)}</p>
               <p className="text-xs text-faint">{hhmm(s.end_time)}</p>
             </div>
-            <span className={cn('w-0.5 shrink-0 rounded-full', live ? 'bg-gold' : done ? 'bg-line' : 'bg-accent/40')} />
+            <span className={cn('w-0.5 shrink-0 rounded-full', cancelled ? 'bg-danger/50' : live ? 'bg-gold' : done ? 'bg-line' : 'bg-accent/40')} />
             <div className="min-w-0 flex-1">
-              <p className={cn('text-sm font-medium', done ? 'text-muted' : 'text-ink')}>
+              <p className={cn('text-sm font-medium', cancelled ? 'text-muted line-through' : done ? 'text-muted' : 'text-ink')}>
                 {s.subject_name}
-                {live && <span className="ml-2 text-xs font-normal text-gold">Одоо явагдаж байна</span>}
+                {!cancelled && live && <span className="ml-2 text-xs font-normal text-gold">Одоо явагдаж байна</span>}
               </p>
+              {cancelled && <p className="mt-0.5 text-xs font-medium text-danger">Өнөөдрийн хичээл цуцлагдлаа</p>}
               <p className="mt-0.5 text-xs text-muted">
                 {show === 'teacher' ? shortName(s.teacher_name) : s.class_name}
                 {s.room && `, ${s.building ? `${s.building} ` : ''}${s.room} тоот`}

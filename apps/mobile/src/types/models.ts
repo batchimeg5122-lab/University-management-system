@@ -218,6 +218,35 @@ export interface Schedule extends ScheduleRecord {
   subject_name?: string;
   teacher_name?: string | null;
   class_name?: string | null;
+  /** Ойрын хугацаанд цуцлагдсан өдрүүд (API: өнөөдрөөс 2 долоо хоног) */
+  cancellations?: ClassCancellation[];
+  /** Өнөөдрийн хичээл цуцлагдсан эсэх */
+  cancelled_today?: boolean;
+}
+
+/** Багш тухайн өдрийн хичээлээ цуцалсан бичлэг */
+export interface ClassCancellation {
+  cancel_date: string;
+  reason: string | null;
+}
+
+/** Цуцлагдсан хичээлийн дэлгэрэнгүй (жагсаалтад) */
+export interface ClassCancellationRow extends ClassCancellation {
+  id: string;
+  schedule_id: string;
+  course_id: string;
+  created_at: string;
+  cancelled_by_name: string | null;
+  day_of_week: number | null;
+  start_time: string;
+  end_time: string;
+  room: string | null;
+  building: string | null;
+  is_online: boolean;
+  subject_code: string | null;
+  subject_name: string | null;
+  class_name: string | null;
+  teacher_name: string | null;
 }
 
 export interface ScheduleConflict {
@@ -264,9 +293,73 @@ export interface Payment {
   transaction_reference: string | null;
   payment_date: string;
   description: string | null;
+  /** Төлбөр төлсөн баримтын дугаар — RCP-YYYY-00001 */
+  receipt_no?: string | null;
   invoice_number?: string;
   student_name?: string;
   student_code?: string;
+}
+
+/** Төлбөр төлсөн баримт (PDF-д шаардах бүх мэдээлэл) */
+export interface PaymentReceipt {
+  id: string;
+  receipt_no: string | null;
+  payment_date: string;
+  method: string;
+  transaction_reference: string | null;
+  description: string | null;
+  amount: number;
+  /** Дүн үгээр — "нэг сая хоёр зуун тавин мянган төгрөг" */
+  amount_words: string;
+  organization: { name: string; phone: string | null; email: string | null };
+  student: { code: string | null; name: string | null; email: string | null; phone: string | null; class_name: string | null; program_name: string | null };
+  invoice: {
+    number: string | null;
+    semester: string | null;
+    tuition_amount: number;
+    discount_amount: number;
+    net_amount: number;
+    paid_amount: number;
+    balance: number;
+    status: string | null;
+    due_date: string | null;
+  };
+}
+
+export type SessionKind = 'lecture' | 'seminar' | 'lab' | 'exam';
+
+/** Багшийн хичээлийн цагийн тайлан */
+export interface WorkloadReport {
+  teacher: { id: string; name: string | null; position: string | null; department: string | null } | null;
+  semester: { id: string; label: string; start_date: string | null; end_date: string | null } | null;
+  weeks: number;
+  academic_minutes: number;
+  rows: {
+    course_id: string;
+    subject_code: string | null;
+    subject_name: string | null;
+    class_name: string | null;
+    credit: number | null;
+    student_count: number;
+    weekly: Record<SessionKind, number>;
+    weekly_total: number;
+    weekly_minutes: number;
+    semester_total: number;
+    session_count: number;
+    cancelled_count: number;
+  }[];
+  totals: {
+    courses: number;
+    classes: number;
+    students: number;
+    credits: number;
+    weekly_hours: number;
+    weekly_minutes: number;
+    semester_hours: number;
+    sessions: number;
+    cancelled: number;
+    by_type: Record<SessionKind, number>;
+  };
 }
 
 export interface Notification {

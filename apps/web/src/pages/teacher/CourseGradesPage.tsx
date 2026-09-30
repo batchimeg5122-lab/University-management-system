@@ -2,14 +2,16 @@ import { useEffect, useMemo, useState, type ClipboardEvent, type KeyboardEvent }
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { Send } from 'lucide-react';
-import { Button, ConfirmDialog, ErrorState, PageLoader, Panel } from '@/components/ui';
+import { Button, ConfirmDialog, ErrorState, ExportButton, PageLoader, Panel } from '@/components/ui';
 import { GradeStatusBadge } from '@/components/ui/StatusBadge';
 import { useToast } from '@/components/ui/Toast';
 import { CourseHeader } from '@/features/courses/components/CourseHeader';
 import { useCourseEnrollments, useGradeItems, useSaveGrades, useSubmitGrades } from '@/features/grades/hooks';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { errorMessage, get } from '@/lib/api';
+import { exportExcel } from '@/lib/excel';
 import { computeTotal, scoreToGrade } from '@/lib/gpa';
+import { GRADE_STATUS_LABEL } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import type { GradeStatus } from '@/types/models';
 
@@ -177,12 +179,43 @@ export default function CourseGradesPage() {
             title={`${completeCount} / ${enrollments?.length ?? 0} оюутны дүн бүрэн`}
             description={`${items?.map((i) => `${i.name} ${i.max_score}`).join(', ') ?? ''} · Enter/↑↓←→ шилжих, Excel-ээс хуулж буулгах боломжтой`}
             actions={
-              !locked && (
-                <>
-                  <Button onClick={onSave} loading={saveGrades.isPending} disabled={!dirty}>Хадгалах</Button>
-                  <Button variant="primary" icon={<Send className="h-3.5 w-3.5" />} onClick={() => setConfirm(true)}>Илгээх</Button>
-                </>
-              )
+              <>
+                <ExportButton
+                  label="Дүнгийн хуудас"
+                  disabled={!enrollments?.length}
+                  onExport={() =>
+                    exportExcel(
+                      'dungiin-huudas',
+                      'Дүн',
+                      [
+                        { header: 'Оюутны код', value: (e) => e.student_code, width: 14 },
+                        { header: 'Оюутан', value: (e) => e.student_name, width: 28 },
+                        ...(items ?? []).map((it) => ({
+                          header: `${it.name} (${it.max_score})`,
+                          value: (e: NonNullable<typeof enrollments>[number]) => parsed(e.id)[it.id] ?? '',
+                          width: Math.max(12, it.name.length + 6),
+                        })),
+                        { header: 'Нийт', value: (e) => computeTotal(parsed(e.id), items ?? []).total },
+                        {
+                          header: 'Үнэлгээ',
+                          value: (e) => {
+                            const { total, complete } = computeTotal(parsed(e.id), items ?? []);
+                            return complete ? scoreToGrade(total, scale)?.letter ?? '' : '';
+                          },
+                        },
+                        { header: 'Төлөв', value: (e) => GRADE_STATUS_LABEL[e.grade_status] ?? e.grade_status, width: 16 },
+                      ],
+                      enrollments ?? [],
+                    )
+                  }
+                />
+                {!locked && (
+                  <>
+                    <Button onClick={onSave} loading={saveGrades.isPending} disabled={!dirty}>Хадгалах</Button>
+                    <Button variant="primary" icon={<Send className="h-3.5 w-3.5" />} onClick={() => setConfirm(true)}>Илгээх</Button>
+                  </>
+                )}
+              </>
             }
           >
             <div className="overflow-x-auto">

@@ -101,6 +101,7 @@ export const router = createBrowserRouter([
                   { path: 'exams', element: page(() => import('@/pages/academic/ExamsPage')) },
                   { path: 'at-risk', element: page(() => import('@/pages/academic/AtRiskPage')) },
                   { path: 'trends', element: page(() => import('@/pages/academic/TrendsPage')) },
+                  { path: 'teacher-workload', element: page(() => import('@/pages/academic/TeacherWorkloadPage')) },
                 ],
               },
             ],
@@ -141,6 +142,7 @@ export const router = createBrowserRouter([
               { path: 'courses/:courseId/materials', element: page(() => import('@/pages/teacher/CourseMaterialsPage')) },
               { path: 'courses/:courseId/stats', element: page(() => import('@/pages/teacher/CourseStatsPage')) },
               { path: 'schedule', element: page(() => import('@/pages/teacher/TeacherSchedulePage')) },
+              { path: 'workload', element: page(() => import('@/pages/teacher/MyWorkloadPage')) },
             ],
           },
 
@@ -159,6 +161,9 @@ export const router = createBrowserRouter([
               { path: 'profile', element: page(() => import('@/pages/student/MyProfilePage')) },
             ],
           },
+
+          // Мэдээлэл татах — эрх тус бүрт тохирсон жагсаалт
+          { path: 'downloads', element: page(() => import('@/pages/common/DownloadsPage')) },
 
           { path: '*', element: page(() => import('@/pages/NotFoundPage')) },
         ],
